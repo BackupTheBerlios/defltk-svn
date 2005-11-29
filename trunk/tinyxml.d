@@ -27,28 +27,21 @@
 
 module tinyxml;
 
-/+
-#include <ctype.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <assert.h>
+import std.string, std.file, std.utf, std.stdio;
 
 // debug = TI_DEBUG
+debug(DEBUG_PARSE)
+    alias std.stdio.writefln TIXML_LOG;
 
+/+
 #if defined( DEBUG ) && defined( _MSC_VER )
 #include <windows.h>
 #define TIXML_LOG OutputDebugString
 #else
 #define TIXML_LOG printf
 #endif
-
-#include "tinystr.h"
-#define TIXML_STRING    TiXmlString
-#define TIXML_OSTREAM   TiXmlOutStream
-
 +/
-alias char[] string;
+alias char[]        string;
 
 //class TiXmlDocument;
 //class TiXmlElement;
@@ -59,10 +52,7 @@ alias char[] string;
 //class TiXmlDeclaration;
 //class TiXmlParsingData;
 
-const int TIXML_MAJOR_VERSION = 2;
-const int TIXML_MINOR_VERSION = 4;
-const int TIXML_PATCH_VERSION = 2;
-
+const int TIXML_VERSION = 0x242;
 
 // Bunch of unicode info at:
 //      http://www.unicode.org/faq/utf_bom.html
@@ -82,12 +72,7 @@ const char TIXML_UTF_LEAD_2 = 0xbfU;
     in the XML file.
 */
 struct TiXmlCursor
-{
-    this()
-    {
-        Clear();
-    }
-    
+{   
     void Clear()
     {
         row = -1;
@@ -111,12 +96,17 @@ enum
 // Used by the parsing routines.
 enum TiXmlEncoding
 {
-    TIXML_ENCODING_UNKNOWN,
-    TIXML_ENCODING_UTF8,
-    TIXML_ENCODING_LEGACY
+    UNKNOWN,
+    UTF8,
+    LEGACY
 }
 
-const TiXmlEncoding TIXML_DEFAULT_ENCODING = TIXML_ENCODING_UNKNOWN;
+const TiXmlEncoding TIXML_DEFAULT_ENCODING = TiXmlEncoding.UNKNOWN;
+
+bool IsWhiteSpace(char c)
+{
+    return std.string.iswhite(c) == 0;
+}
 
 /** TiXmlBase is a base class for every class in TinyXml.
     It does little except to establish that TinyXml classes
@@ -150,7 +140,7 @@ public:
         
         (For an unformatted stream, use the << operator.)
     */
-    abstract void Print( FILE* cfile, int depth );
+    abstract char[] toString( int depth );
 
     /** Return the position, in the original source file, of this node or attribute.
         The row and column are 1-based. (That is the first row and first column is
@@ -158,7 +148,7 @@ public:
         a row and column value.
 
         Generally, the row and column value will be set when the TiXmlDocument::Load(),
-        TiXmlDocument::LoadFile(), or any TiXmlNode::Parse() is called. It will NOT be set
+        TiXmlDocument::LoadFile(), or any TiXmlNode.Parse() is called. It will NOT be set
         when the DOM was created from operator>>.
 
         The values reflect the initial load. Once the DOM is modified programmatically
@@ -179,7 +169,7 @@ public:
     void  SetUserData( void* user )         { userData = user; }
     void* GetUserData()                     { return userData; }
 
-    abstract TiString Parse(TiString p, TiXmlParsingData* data, TiXmlEncoding encoding /*= TIXML_ENCODING_UNKNOWN */ );
+    abstract char[] Parse(char[] p, TiXmlParsingData data, TiXmlEncoding encoding /*= TiXmlEncoding.UNKNOWN */ );
 
     enum
     {
@@ -204,16 +194,6 @@ public:
     }
 
 protected:
-    // See STL_STRING_BUG
-    // Utility class to overcome a bug.
-    class StringToBuffer
-    {
-      public:
-        StringToBuffer( const TIXML_STRING& str);
-        ~StringToBuffer();
-        char* buffer;
-    }
-
     TiXmlCursor location;
 
     /// Field containing a generic user pointer
@@ -232,16 +212,15 @@ private:
         NUM_ENTITY = 5,
         MAX_ENTITY_LENGTH = 6
 
-    }   
+    }
     
-    static Entity entity[ NUM_ENTITY ]
-    [
-        { "&amp;",  5, '&' },
-        { "&lt;",   4, '<' },
-        { "&gt;",   4, '>' },
-        { "&quot;", 6, '\"' },
-        { "&apos;", 6, '\'' }
-    ];
+    const Entity amp = { "&amp;",  5, '&' };
+    const Entity lt = { "&lt;",   4, '<' };
+    const Entity gt = { "&gt;",   4, '>' };
+    const Entity quot = { "&quot;", 6, '\"' };
+    const Entity apos = { "&apos;", 6, '\'' };
+    
+    static Entity entity[] = [ amp, lt, gt, quot, apos ];
     static bool condenseWhiteSpace = true;
     
 public:    
@@ -297,17 +276,17 @@ protected:
             return null;
         }
         
-        if ( encoding == TIXML_ENCODING_UTF8 )
+        if ( encoding == TiXmlEncoding.UTF8 )
         {
-            if((isUTF8LeadingBytes(p[0..3]))
+            if(isUTF8LeadingBytes(p[0..3]))
             {
-                p = p[3 + $];
+                p = p[3 .. $];
             }
         }
 
         foreach(int i, dchar c; p)
         {
-            if(!(std.string.isspace(c))
+            if(!std.string.isspace(c))
             {
                 return p[i..$];
             }               
@@ -316,8 +295,6 @@ protected:
         return null;
     }
 
-    alias std.string.isspace IsWhiteSpace;  
-    
     /*  Reads an XML name into the string provided. Returns
         a pointer just past the last character of the name,
         or 0 if the function has an error.
@@ -325,7 +302,7 @@ protected:
     static char[] ReadName(char[] p, out char[] name, TiXmlEncoding encoding)
     in
     {
-        assert( p !is null)
+        assert( p !is null);
     }
     body
     {
@@ -338,7 +315,7 @@ protected:
         // but tinyxml can't tell namespaces from names.)
         if (p.length > 0 && ( IsAlpha( p[0], encoding) || p[0] == '_' ))
         {
-            foreach(int i, dchar c; p[1..$])
+            foreach(int i, dchar c; p[0..$])
             {
                 if(!(IsAlphaNum(c , encoding) 
                              || c == '_'
@@ -346,23 +323,23 @@ protected:
                              || c == '.'
                              || c == ':'))
                 {
-                    name = [0..i];
+                    name = p[0..i];                    
                     return p[i..$];
                 }               
             }
-            name = p;
+            name = "";
             return null;
         }
         name = null;
         return null;
     }
 
-    int findTag(char[] s, char[] tag, bool ignoreCase)
+    static int findTag(char[] p, char[] tag, bool ignoreCase)
     {
         if(ignoreCase)
-            return std.string.ifind(p, endTag);
+            return std.string.ifind(p, tag);
         else
-            return std.string.find(p, endTag);
+            return std.string.find(p, tag);
 
     }
 
@@ -452,7 +429,7 @@ protected:
 
                 int end = find(p, ';');
                 if ( end == -1 )  return null;
-                char[] number = p[3, end];
+                char[] number = p[3..end];
 
                 foreach(char c; number)
                 {
@@ -461,7 +438,7 @@ protected:
                     ucs += value;
                     ucs << 4; //ucs * 16;
                 }
-                p = p[end + 1, $]; //skip ';'
+                p = p[end + 1..$]; //skip ';'
             }
             else
             {
@@ -471,7 +448,7 @@ protected:
                 int end = find(p, ';');
                 if ( end == -1 )  return null;
 
-                char[] number = p[2, end];
+                char[] number = p[2..end];
     
                 foreach(char c; number)
                 {
@@ -480,13 +457,15 @@ protected:
                     ucs += value;
                     ucs *= 10;
                 }
-                p = p[end + 1, $]; //skip ';'
+                p = p[end + 1..$]; //skip ';'
             }
 
-            if ( encoding == TIXML_ENCODING_UTF8 )
+            if ( encoding == TiXmlEncoding.UTF8 )
             {
                 // convert the UCS to UTF-8
-                value = std.utf.toUTF8(cast(dchar)ucs);                
+                dchar[] a;
+                a ~= ucs;
+                value = std.utf.toUTF8(a);
             }
             else
             {
@@ -522,7 +501,7 @@ protected:
     }
     body
     {        
-        if ( encoding == TIXML_ENCODING_UTF8 )
+        if ( encoding == TiXmlEncoding.UTF8 )
         {
             length = utf8ByteTable[ cast(int)p[0] ];
             assert( length >= 0 && length < 5 );
@@ -539,7 +518,7 @@ protected:
         
         if ( length > 0 )
         {              
-            _value = p[i..length];
+            _value = p[0..length];
             return p[length .. $];
         }
         else
@@ -554,7 +533,7 @@ protected:
     {
         foreach(int i, char c; from)
         {
-            if (c == '&' && i < (str.length - 2) && from[i + 1] == '#' && from[i+2] == 'x')
+            if (c == '&' && i < (from.length - 2) && from[i + 1] == '#' && from[i+2] == 'x')
             {
                 // Hexadecimal character reference.
                 // Pass through unchanged.
@@ -589,7 +568,7 @@ protected:
             }
             else if ( c < 32 )
             {
-                char[5] symbol = "&#x00";
+                char[] symbol = "&#x00";
                 symbol[4] = std.string.hexdigits[(c & 0xff) >> 4];
                 symbol[5] = std.string.hexdigits[c & 0xf];
 
@@ -611,10 +590,14 @@ protected:
         assert(p !is null && endTag !is null && p.length > 0 && endTag.length > 0);
     }
     body
-    {           
+    {
+        debug(DEBUG_PARSE) writefln("%s == %s", p, endTag);
+        if(p.length < endTag.length)
+            return false;
+    
         if ( ignoreCase )
         {
-            return 0 == std.string.icmp(p[0 .. endTag.length], endTag);         
+            return 0 == std.string.icmp(p[0 .. endTag.length], endTag);
         }
         else
         {
@@ -633,10 +616,10 @@ protected:
         // to figure out alhabetical vs. not across encoding. So take a very 
         // conservative approach.
     
-    //  if ( encoding == TIXML_ENCODING_UTF8 )
+    //  if ( encoding == TiXmlEncoding.UTF8 )
     //  {
             if ( anyByte < 127 )
-                return isalpha( anyByte );
+                return std.string.isalpha(anyByte);
             else
                 return 1;   // What else to do? The unicode set is huge...get the english ones right.
     //  }
@@ -653,10 +636,10 @@ protected:
         // to figure out alhabetical vs. not across encoding. So take a very 
         // conservative approach.
     
-    //  if ( encoding == TIXML_ENCODING_UTF8 )
+    //  if ( encoding == TiXmlEncoding.UTF8 )
     //  {
             if ( anyByte < 127 )
-                return isalnum( anyByte );
+                return std.string.isalnum( anyByte );
             else
                 return 1;   // What else to do? The unicode set is huge...get the english ones right.
     //  }
@@ -668,7 +651,7 @@ protected:
     /+
     static int ToLower( int v, TiXmlEncoding    encoding )
     {
-        if ( encoding == TIXML_ENCODING_UTF8 )
+        if ( encoding == TiXmlEncoding.UTF8 )
         {
             if ( v < 128 ) return tolower( v );
             return v;
@@ -707,8 +690,8 @@ public:
 
     ~this()
     {
-        TiXmlNode* node = firstChild;
-        TiXmlNode* temp = 0;
+        TiXmlNode node = firstChild;
+        TiXmlNode temp = null;
     
         while ( node )
         {
@@ -730,7 +713,7 @@ public:
 
         The subclasses will wrap this function.
     */
-    TiString Value() { return value; }
+    char[] Value() { return value; }
 
     /** Changes the value of the node. Defined as:
         @verbatim
@@ -741,23 +724,23 @@ public:
         Text:       the text string
         @endverbatim
     */
-    void Value(TiString  _value) { value = _value;}
+    void Value(char[]  _value) { value = _value;}
 
     /// Delete all the children of this node. Does not affect 'this'.
     void Clear()
     {
         TiXmlNode node = firstChild;
-        TiXmlNode temp = 0;
+        TiXmlNode temp = null;
     
-        while ( node )
+        while ( node !is null )
         {
             temp = node;
             node = node.next;
             delete temp;
         }   
     
-        firstChild = 0;
-        lastChild = 0;
+        firstChild = null;
+        lastChild = null;
     }
 
     /// One step up the DOM.
@@ -765,7 +748,7 @@ public:
     
     TiXmlNode FirstChild() { return firstChild; }
     ///< The first child of this node with the matching 'value'. Will be null if none found.    
-    TiXmlNode FirstChild( TiString v )
+    TiXmlNode FirstChild( char[] v )
     {
         TiXmlNode node;
         for ( node = firstChild; node !is null; node = node.next )
@@ -781,9 +764,9 @@ public:
     TiXmlNode LastChild()  { return lastChild; }
     
     /// The last child of this node matching 'value'. Will be null if there are no children.
-    TiXmlNode LastChild( string  v )
+    TiXmlNode LastChild( char[]  v )
     {
-        TiXmlNode* node;
+        TiXmlNode node;
         for ( node = firstChild; node !is null; node = node.prev )
         {
             if ( node.value == v)
@@ -823,16 +806,16 @@ public:
     }
 
     /// This flavor of IterateChildren searches for children with a particular 'value'
-    TiXmlNode IterateChildren( string  value,  TiXmlNode previous )
+    TiXmlNode IterateChildren( char[]  value,  TiXmlNode previous )
     {
         if ( previous is null )
         {
-            return FirstChild( val );
+            return FirstChild( value );
         }
         else
         {
             assert( previous.parent == this );
-            return previous.NextSibling( val );
+            return previous.NextSibling( value );
         }
     }
 
@@ -853,6 +836,7 @@ public:
     }
     body
     {
+        writefln("here is %s", lastChild !is null);
         node.parent = this;
     
         node.prev = lastChild;
@@ -972,7 +956,7 @@ public:
     TiXmlNode PreviousSibling()                        { return prev; }
 
     /// Navigate to a sibling node. 
-    TiXmlNode PreviousSibling( string  _value)
+    TiXmlNode PreviousSibling( char[]  _value)
     {
         TiXmlNode node;
         for ( node = prev; node !is null; node = node.prev )
@@ -987,9 +971,9 @@ public:
     TiXmlNode NextSibling()                            { return next; }
 
     /// Navigate to a sibling node with the given 'value'.  
-    TiXmlNode NextSibling( string  _value)
+    TiXmlNode NextSibling( char[]  _value)
     {
-        TiXmlNode* node;
+        TiXmlNode node;
         for ( node = next; node !is null; node = node.next )
         {
             if ( node.value == _value)
@@ -1083,17 +1067,17 @@ public:
 
 
     ///< Cast to a more defined type. Will return null not of the requested type.
-    TiXmlDocument ToDocument() { return ( this && type == DOCUMENT ) ? cast(TiXmlDocument) this : null; }
-    TiXmlElement  ToElement()  { return ( this && type == ELEMENT  ) ? cast(TiXmlElement)  this : null; }
-    TiXmlComment  ToComment()  { return ( this && type == COMMENT  ) ? cast(TiXmlComment)  this : null; } 
-    TiXmlUnknown  ToUnknown()  { return ( this && type == UNKNOWN  ) ? cast(TiXmlUnknown)  this : null; } 
-    TiXmlText     ToText()     { return ( this && type == TEXT     ) ? cast(TiXmlText)     this : null; } 
-    TiXmlDeclaration ToDeclaration()   { return ( this && type == DECLARATION ) ? cast(TiXmlDeclaration) this : null; } 
+    TiXmlDocument ToDocument() { return ( type == NodeType.DOCUMENT ) ? cast(TiXmlDocument) this : null; }
+    TiXmlElement  ToElement()  { return ( type == NodeType.ELEMENT  ) ? cast(TiXmlElement)  this : null; }
+    TiXmlComment  ToComment()  { return ( type == NodeType.COMMENT  ) ? cast(TiXmlComment)  this : null; } 
+    TiXmlUnknown  ToUnknown()  { return ( type == NodeType.UNKNOWN  ) ? cast(TiXmlUnknown)  this : null; } 
+    TiXmlText     ToText()     { return ( type == NodeType.TEXT     ) ? cast(TiXmlText)     this : null; } 
+    TiXmlDeclaration ToDeclaration(){ return ( type == NodeType.DECLARATION ) ? cast(TiXmlDeclaration) this : null; } 
 
     /** Create an exact duplicate of this node and return it. The memory must be deleted
         by the caller. 
     */
-    abstract TiXmlNode Clone();
+    //abstract TiXmlNode Clone();
 
 protected:
     this( NodeType _type )
@@ -1108,11 +1092,13 @@ protected:
 
     // Copy to the allocated object. Shared functionality between Clone, Copy constructor,
     // and the assignment operator.
+    /+
     void CopyTo( TiXmlNode target )
     {
         target.Value(value);
         target.userData = userData; 
     }
+    +/
 
     // Figure out what is at *p, and parse it. Returns null if it is not an xml node.
     TiXmlNode Identify(char[] p, TiXmlEncoding encoding )
@@ -1141,21 +1127,21 @@ protected:
     
         if ( StringEqual( p, xmlHeader, true, encoding ) )
         {
-            version(DEBUG_PARSE)
+            debug(DEBUG_PARSE)
                 TIXML_LOG( "XML parsing Declaration\n" );
 
             returnNode = new TiXmlDeclaration();
         }
         else if ( StringEqual( p, commentHeader, false, encoding ) )
         {
-            version(DEBUG_PARSE)
+            debug(DEBUG_PARSE)
                 TIXML_LOG( "XML parsing Comment\n" );
 
             returnNode = new TiXmlComment();
         }
         else if ( StringEqual( p, cdataHeader, false, encoding ) )
         {
-            version(DEBUG_PARSE)
+            debug(DEBUG_PARSE)
                 TIXML_LOG( "XML parsing CDATA\n" );
 
             TiXmlText text = new TiXmlText( "" );
@@ -1164,21 +1150,21 @@ protected:
         }
         else if ( StringEqual( p, dtdHeader, false, encoding ) )
         {
-            version(DEBUG_PARSE)
+            debug(DEBUG_PARSE)
                 TIXML_LOG( "XML parsing Unknown(DTD)\n" );
 
             returnNode = new TiXmlUnknown();
         }
         else if ( IsAlpha( p[1], encoding ) || p[1] == '_' )
         {
-            version(DEBUG_PARSE)
+            debug(DEBUG_PARSE)
                 TIXML_LOG( "XML parsing Element\n" );
 
             returnNode = new TiXmlElement( "" );
         }
         else
         {
-            version(DEBUG_PARSE)
+            debug(DEBUG_PARSE)
                 TIXML_LOG( "XML parsing Unknown(...)\n" );
 
             returnNode = new TiXmlUnknown();
@@ -1192,7 +1178,7 @@ protected:
         else
         {
             if ( doc !is null )
-                doc.SetError( TIXML_ERROR_OUT_OF_MEMORY, 0, 0, TIXML_ENCODING_UNKNOWN );
+                doc.SetError( TIXML_ERROR_OUT_OF_MEMORY, null, null, TiXmlEncoding.UNKNOWN );
         }
         return returnNode;
     }
@@ -1202,7 +1188,7 @@ protected:
 
     TiXmlNode      firstChild, lastChild;
 
-    TiString       value;
+    char[]       value;
 
     TiXmlNode      prev, next;
 }
@@ -1227,7 +1213,7 @@ public:
     }
 
     /// Construct an attribute with a name and value.
-    this( string _name, string  _value )
+    this( string _name, char[]  _value )
     {
         name = _name;
         value = _value;
@@ -1255,14 +1241,14 @@ public:
         A specialized but useful call. Note that for success it returns 0,
         which is the opposite of almost all other TinyXml calls.
     */
-    int QueryIntValue( out int _value ) const
+    int QueryIntValue( out int _value )
     {
         if ( sscanf( value.c_str(), "%d", ival ) == 1 )
             return TIXML_SUCCESS;
         return TIXML_WRONG_TYPE;
     }
     /// QueryDoubleValue examines the value string. See QueryIntValue().
-    int QueryDoubleValue( double* _value ) const
+    int QueryDoubleValue( double* _value )
     {
         if ( sscanf( value.c_str(), "%lf", dval ) == 1 )
             return TIXML_SUCCESS;
@@ -1281,8 +1267,7 @@ public:
     {
         value = std.string.toString(_value);
     }
-
-    
+   
     /// Get the next sibling attribute in the DOM. Returns null at end.
     TiXmlAttribute Next()
     {
@@ -1318,35 +1303,35 @@ public:
     char[] Parse( char[] p, TiXmlParsingData data, TiXmlEncoding encoding )
     {
         p = SkipWhiteSpace( p, encoding );
-        if ( !p || !*p ) return null;
+        if ( p is null || p.length == 0 ) return null;
     
         int tabsize = 4;
-        if ( document )
+        if ( document !is null)
             tabsize = document.TabSize();
     
-        if ( data )
+        if ( data !is null )
         {
             data.Stamp( p, encoding );
             location = data.Cursor();
         }
         // Read the name, the '=' and the value.
         char[] pErr = p;
-        p = ReadName( p, &name, encoding );
-        if ( !p || !*p )
+        p = ReadName( p, name, encoding );
+        if ( p is null)
         {
             if ( document ) document.SetError( TIXML_ERROR_READING_ATTRIBUTES, pErr, data, encoding );
             return null;
         }
         p = SkipWhiteSpace( p, encoding );
-        if ( !p || !*p || *p != '=' )
+        if ( p is null || p.length == 0 || p[0] != '=' )
         {
             if ( document ) document.SetError( TIXML_ERROR_READING_ATTRIBUTES, p, data, encoding );
             return null;
         }
     
-        ++p;    // skip '='
+        p = p[1 .. $];    // skip '='
         p = SkipWhiteSpace( p, encoding );
-        if ( !p || !*p )
+        if ( p is null || p.length == 0)
         {
             if ( document ) document.SetError( TIXML_ERROR_READING_ATTRIBUTES, p, data, encoding );
             return null;
@@ -1354,17 +1339,15 @@ public:
         
         char[] end;
     
-        if ( *p == '\'' )
+        if ( p[0] == '\'' )
         {
-            ++p;
             end = "\'";
-            p = ReadText( p, &value, false, end, false, encoding );
+            p = ReadText( p[1 .. $], value, false, end, false, encoding );
         }
         else if ( *p == '"' )
         {
-            ++p;
             end = "\"";
-            p = ReadText( p, &value, false, end, false, encoding );
+            p = ReadText( p[1 .. $], value, false, end, false, encoding );
         }
         else
         {
@@ -1372,62 +1355,37 @@ public:
             // But this is such a common error that the parser will try
             // its best, even without them.
             value = "";
-            while (    p && *p                                      // existence
-                    && !IsWhiteSpace( *p ) && *p != '\n' && *p != '\r'  // whitespace
-                    && *p != '/' && *p != '>' )                     // tag end
-            {
-                value += *p;
-                ++p;
+            const char[] saparator = std.string.whitespace ~ "/>";
+
+            foreach(char c; p)
+            {                
+                if( -1 == std.string.find(saparator, c))
+                {
+                    value ~= c;
+                }
             }
         }
         return p;
     }
 
     // Prints this Attribute to a FILE stream.
-    virtual void Print( FILE* cfile, int depth ) const
+    char[] toString(int depth )
     {
-        TIXML_STRING n, v;
-    
-        PutString( name, &n );
-        PutString( value, &v );
-    
-        if (value.find ('\"') == TIXML_STRING::npos)
-            fprintf (cfile, "%s=\"%s\"", n.c_str(), v.c_str() );
+        if (std.string.find (value, '\"') == -1)
+            return name ~ "=\"" ~ value ~ "\"";
         else
-            fprintf (cfile, "%s='%s'", n.c_str(), v.c_str() );
-    }
-
-    virtual void StreamOut( TIXML_OSTREAM * out ) const
-    {
-        if (value.find( '\"' ) != TIXML_STRING::npos)
-        {
-            PutString( name, stream );
-            (*stream) << "=" << "'";
-            PutString( value, stream );
-            (*stream) << "'";
-        }
-        else
-        {
-            PutString( name, stream );
-            (*stream) << "=" << "\"";
-            PutString( value, stream );
-            (*stream) << "\"";
-        }
+            return name ~ "=\'" ~ value ~ "\'";
     }
 
     // [internal use]
     // Set the document pointer so the attribute can report errors.
-    void SetDocument( TiXmlDocument* doc )  { document = doc; }
+    void Document( TiXmlDocument doc )  { document = doc; }
 
 private:
-    //TiXmlAttribute(   const TiXmlAttribute& );                // not implemented.
-    //void operator=(   const TiXmlAttribute& base );   // not allowed.
-
-    TiXmlDocument*  document;   // A pointer back to a document, for error reporting.
-    TIXML_STRING name;
-    TIXML_STRING value;
-    TiXmlAttribute* prev;
-    TiXmlAttribute* next;
+    TiXmlDocument document;   // A pointer back to a document, for error reporting.
+    char[] name;
+    char[] value;
+    TiXmlAttribute prev, next;
 }
 
 
@@ -1446,55 +1404,58 @@ private:
 class TiXmlAttributeSet
 {
 public:
-    TiXmlAttributeSet()
+    this()
     {
-        sentinel.next = &sentinel;
-        sentinel.prev = &sentinel;
+        sentinel = null;
     }
-    ~TiXmlAttributeSet()
+    ~this()
     {
-        assert( sentinel.next == &sentinel );
-        assert( sentinel.prev == &sentinel );
     }
 
-    void Add( TiXmlAttribute* attribute )
+    void Add( TiXmlAttribute addMe )
     {
+        if(sentinel is null)
+        {
+            sentinel = addMe;
+            sentinel.next = sentinel;
+            sentinel.prev = sentinel;
+        }
+
         assert( !Find( addMe.Name() ) );   // Shouldn't be multiply adding to the set.
     
-        addMe.next = &sentinel;
+        addMe.next = sentinel;
         addMe.prev = sentinel.prev;
     
         sentinel.prev.next = addMe;
         sentinel.prev      = addMe;
     }
-    void Remove( TiXmlAttribute* attribute )
+    void Remove( TiXmlAttribute removeMe )
     {
-        TiXmlAttribute* node;
+        TiXmlAttribute node;
     
-        for( node = sentinel.next; node != &sentinel; node = node.next )
+        for( node = sentinel.next; node !is sentinel; node = node.next )
         {
-            if ( node == removeMe )
+            if ( node is removeMe )
             {
                 node.prev.next = node.next;
                 node.next.prev = node.prev;
-                node.next = 0;
-                node.prev = 0;
+                node.next = null;
+                node.prev = null;
                 return;
             }
         }
-        assert( 0 );        // we tried to remove a non-linked attribute.
     }
 
 
-    TiXmlAttribute* First()                 { return ( sentinel.next == &sentinel ) ? 0 : sentinel.next; }
+    TiXmlAttribute First() { return ( sentinel.next is sentinel ) ? null : sentinel.next; }
 
-    TiXmlAttribute* Last()                  { return ( sentinel.prev == &sentinel ) ? 0 : sentinel.prev; }
+    TiXmlAttribute Last()  { return ( sentinel.prev is sentinel ) ? null : sentinel.prev; }
 
-    TiXmlAttribute* Find( string  name  )
+    TiXmlAttribute Find( char[]  name  )
     {
-        TiXmlAttribute* node;
+        TiXmlAttribute node;
     
-        for( node = sentinel.next; node != &sentinel; node = node.next )
+        for( node = sentinel.next; node !is sentinel; node = node.next )
         {
             if ( node.name == name )
                 return node;
@@ -1503,11 +1464,6 @@ public:
     }
 
 private:
-    //*ME:  Because of hidden/disabled copy-construktor in TiXmlAttribute (sentinel-element),
-    //*ME:  this class must be also use a hidden/disabled copy-constructor !!!
-    //TiXmlAttributeSet( const TiXmlAttributeSet& );    // not allowed
-    //void operator=(   const TiXmlAttributeSet& ); // not allowed (as TiXmlAttribute)
-
     TiXmlAttribute sentinel;
 }
 
@@ -1520,16 +1476,14 @@ class TiXmlElement : public TiXmlNode
 {
 public:
     /// Construct an element.
-    this (string  in_value) 
+    this (char[]  _value) 
     {
-        super( TiXmlNode::ELEMENT )
-        firstChild = lastChild = 0;
+        super( TiXmlNode.NodeType.ELEMENT );
+        firstChild = null;
+        lastChild = null;
         value = _value;
+        attributeSet = new TiXmlAttributeSet;
     }
-
-    //TiXmlElement( const TiXmlElement& );
-
-    //void operator=(   const TiXmlElement& base );
 
     ~this()
     {
@@ -1539,11 +1493,11 @@ public:
     /** Given an attribute name, Attribute() returns the value
         for the attribute of that name, or null if none exists.
     */
-    char[] Attribute( char[] name ) const
+    char[] Attribute( char[] name )
     {
-        const TiXmlAttribute* node = attributeSet.Find( name );
+        TiXmlAttribute node = attributeSet.Find( name );
     
-        if ( node )
+        if ( node !is null )
             return node.Value();
     
         return null;
@@ -1555,17 +1509,16 @@ public:
         the integer value will be put in the return 'i', if 'i'
         is non-null.
     */
-    char[] Attribute( char[] name, int* i ) const
+    char[] Attribute( char[] name, out int i )
     {
-        const char * s = Attribute( name );
-        if ( i )
+        TiXmlAttribute node = attributeSet.Find( name );
+    
+        if ( node !is null )
         {
-            if ( s )
-                *i = atoi( s );
-            else
-                *i = 0;
+            i = node.IntValue();
+            return node.Value();
         }
-        return s;
+        return null;
     }
 
     /** Given an attribute name, Attribute() returns the value
@@ -1574,20 +1527,19 @@ public:
         the double value will be put in the return 'd', if 'd'
         is non-null.
     */
-    char[] Attribute( char[] name, double* d ) const
+    char[] Attribute( char[] name, out double d )
     {
-        const char * s = Attribute( name );
-        if ( d )
+        TiXmlAttribute node = attributeSet.Find( name );
+    
+        if ( node !is null )
         {
-            if ( s )
-                *d = atof( s );
-            else
-                *d = 0;
+            d = node.DoubleValue();
+            return node.Value();
         }
-        return s;
+        return null;
     }
 
-
+    /+
     /** QueryIntAttribute examines the attribute - it is an alternative to the
         Attribute() method with richer error checking.
         If the attribute is an integer, it is stored in 'value' and 
@@ -1595,7 +1547,7 @@ public:
         an integer, it returns TIXML_WRONG_TYPE. If the attribute
         does not exist, then TIXML_NO_ATTRIBUTE is returned.
     */  
-    int QueryIntAttribute( char[] name, int* _value ) const
+    int QueryIntAttribute( char[] name, int* _value )
     {
         const TiXmlAttribute* node = attributeSet.Find( name );
         if ( !node )
@@ -1605,7 +1557,7 @@ public:
     }
     
     /// QueryDoubleAttribute examines the attribute - see QueryIntAttribute().
-    int QueryDoubleAttribute( char[] name, double* _value ) const
+    int QueryDoubleAttribute( char[] name, double* _value )
     {
         const TiXmlAttribute* node = attributeSet.Find( name );
         if ( !node )
@@ -1615,7 +1567,7 @@ public:
     }
     
     /// QueryFloatAttribute examines the attribute - see QueryIntAttribute().
-    int QueryFloatAttribute( char[] name, float* _value ) const
+    int QueryFloatAttribute( char[] name, float* _value )
     {
         double d;
         int result = QueryDoubleAttribute( name, &d );
@@ -1624,61 +1576,55 @@ public:
         }
         return result;
     }
+    +/
 
     /** Sets an attribute of name to a given value. The attribute
         will be created if it does not exist, or changed if it does.
     */
-    void SetAttribute( char[] name, string  _value )
+    void SetAttribute( char[] name, char[]  _value )
     {
-        TiXmlAttribute* node = attributeSet.Find( name );
-        if ( node )
+        TiXmlAttribute node = attributeSet.Find( name );
+        if ( node !is null)
         {
-            node.SetValue( _value );
+            node.Value( _value );
             return;
         }
     
-        TiXmlAttribute* attrib = new TiXmlAttribute( name, _value );
-        if ( attrib )
+        TiXmlAttribute attrib = new TiXmlAttribute( name, _value );
+        if ( attrib !is null )
         {
             attributeSet.Add( attrib );
         }
         else
         {
-            TiXmlDocument* document = GetDocument();
-            if ( document ) document.SetError( TIXML_ERROR_OUT_OF_MEMORY, 0, 0, TIXML_ENCODING_UNKNOWN );
+            TiXmlDocument document = GetDocument();
+            if ( document !is null )
+                document.SetError( TIXML_ERROR_OUT_OF_MEMORY, null, null, TiXmlEncoding.UNKNOWN );
         }
     }
   
     /** Sets an attribute of name to a given value. The attribute
         will be created if it does not exist, or changed if it does.
     */
-    void SetAttribute( string   name, int value )
+    void SetAttribute( char[] name, int value )
     {   
-        char buf[64];
-        sprintf( buf, "%d", val );
-        SetAttribute( name, buf );
+        SetAttribute( name, std.string.toString(value));
     }
 
     /** Sets an attribute of name to a given value. The attribute
         will be created if it does not exist, or changed if it does.
     */
-    void SetDoubleAttribute( string  name, double value )
+    void SetDoubleAttribute( char[]  name, double value )
     {   
-        char buf[256];
-        #if defined(TIXML_SNPRINTF)     
-            TIXML_SNPRINTF( buf, sizeof(buf), "%f", val );
-        #else
-            sprintf( buf, "%f", val );
-        #endif
-        SetAttribute( name, buf );
+        SetAttribute( name, std.string.toString(value));
     }
 
     /** Deletes an attribute with the given name.
     */
-    void RemoveAttribute( string  name  )
+    void RemoveAttribute( char[]  name  )
     {
-        TiXmlAttribute* node = attributeSet.Find( name );
-        if ( node )
+        TiXmlAttribute node = attributeSet.Find( name );
+        if ( node !is null)
         {
             attributeSet.Remove( node );
             delete node;
@@ -1686,9 +1632,9 @@ public:
     }
     
     ///< Access the first attribute in this element.
-    TiXmlAttribute* FirstAttribute()                { return attributeSet.First(); }
+    TiXmlAttribute FirstAttribute()                { return attributeSet.First(); }
     ///< Access the last attribute in this element.
-    TiXmlAttribute* LastAttribute()                 { return attributeSet.Last(); }
+    TiXmlAttribute LastAttribute()                 { return attributeSet.Last(); }
 
     /** Convenience function for easy access to the text inside an element. Although easy
         and concise, GetText() is limited compared to getting the TiXmlText child
@@ -1719,23 +1665,24 @@ public:
         GetText() will return "This is ".
 
         WARNING: GetText() accesses a child node - don't become confused with the 
-                 similarly named TiXmlHandle::Text() and TiXmlNode::ToText() which are 
+                 similarly named TiXmlHandle::Text() and TiXmlNode.ToText() which are 
                  safe type casts on the referenced node.
     */
-    char[] GetText() const
+    char[] GetText()
     {
-        const TiXmlNode* child = this.FirstChild();
-        if ( child ) {
-            const TiXmlText* childText = child.ToText();
-            if ( childText ) {
+        TiXmlNode child = this.FirstChild();
+        if ( child !is null)
+        {
+            TiXmlText childText = child.ToText();
+            if ( childText !is null ) {
                 return childText.Value();
             }
         }
         return null;
     }
-
+    /+
     /// Creates a new Element and returns it - the returned element is a copy.
-    TiXmlNode* Clone() const
+    TiXmlNode Clone()
     {
         TiXmlElement* clone = new TiXmlElement( Value() );
         if ( !clone )
@@ -1744,171 +1691,175 @@ public:
         CopyTo( clone );
         return clone;
     }
+    +/
     
     // Print the Element to a FILE stream.
-    void Print( FILE* cfile, int depth ) const
+    char[] toString( int depth )
     {
-        int i;
-        for ( i=0; i<depth; i++ )
+        char[] str = std.string.repeat(" ", depth * 4);
+        str ~= "<" ~ value;
+   
+        TiXmlAttribute attrib;
+        for ( attrib = attributeSet.First(); attrib !is null; attrib = attrib.Next() )
         {
-            fprintf( cfile, "    " );
-        }
-    
-        fprintf( cfile, "<%s", value.c_str() );
-    
-        const TiXmlAttribute* attrib;
-        for ( attrib = attributeSet.First(); attrib; attrib = attrib.Next() )
-        {
-            fprintf( cfile, " " );
-            attrib.Print( cfile, depth );
+            str ~= " " ~ attrib.toString(depth);
         }
     
         // There are 3 different formatting approaches:
         // 1) An element without children is printed as a <foo /> node
         // 2) An element with only a text child is printed as <foo> text </foo>
         // 3) An element with children is printed on multiple lines.
-        TiXmlNode* node;
-        if ( !firstChild )
+        TiXmlNode node;
+        if ( firstChild is null)
         {
-            fprintf( cfile, " />" );
+            str ~= " />";
         }
-        else if ( firstChild == lastChild && firstChild.ToText() )
+        else if ( firstChild == lastChild && firstChild.ToText() !is null )
         {
-            fprintf( cfile, ">" );
-            firstChild.Print( cfile, depth + 1 );
-            fprintf( cfile, "</%s>", value.c_str() );
+            str ~= ">";
+            str ~= firstChild.toString(depth + 1);
+            str ~= "</" ~ value ~ ">";
         }
         else
         {
-            fprintf( cfile, ">" );
+            str ~= ">";
     
-            for ( node = firstChild; node; node=node.NextSibling() )
+            for ( node = firstChild; node !is null; node=node.NextSibling() )
             {
-                if ( !node.ToText() )
+                if ( node.ToText() !is null)
                 {
-                    fprintf( cfile, "\n" );
+                    str ~= "\n";
                 }
-                node.Print( cfile, depth+1 );
+                str ~= node.toString(depth + 1);
             }
-            fprintf( cfile, "\n" );
-            for( i=0; i<depth; ++i )
-            fprintf( cfile, "    " );
-            fprintf( cfile, "</%s>", value.c_str() );
+            str ~= "\n";
+            str ~= std.string.repeat(" ", depth * 4);
+            str ~= "</" ~ value ~ ">";
         }
     }
 
     /*  Attribtue parsing starts: next char past '<'
                          returns: next char past '>'
     */
-    virtual char[] Parse( char[] p, TiXmlParsingData* data, TiXmlEncoding encoding )
+    char[] Parse( char[] p, TiXmlParsingData data, TiXmlEncoding encoding )
     {
+        TiXmlDocument document = GetDocument();
+
         p = SkipWhiteSpace( p, encoding );
-        TiXmlDocument* document = GetDocument();
-    
-        if ( !p || !*p )
+
+        if ( p is null || p.length == 0 )
         {
-            if ( document ) document.SetError( TIXML_ERROR_PARSING_ELEMENT, 0, 0, encoding );
+            if ( document ) document.SetError( TIXML_ERROR_PARSING_ELEMENT, null, null, encoding );
             return null;
         }
     
-        if ( data )
+        if ( data !is null )
         {
             data.Stamp( p, encoding );
             location = data.Cursor();
         }
     
-        if ( *p != '<' )
+        if ( p[0] != '<' )
         {
             if ( document ) document.SetError( TIXML_ERROR_PARSING_ELEMENT, p, data, encoding );
             return null;
         }
     
-        p = SkipWhiteSpace( p+1, encoding );
-    
+        p = SkipWhiteSpace( p[1 .. $], encoding );
+
+        if ( p is null || p.length == 0 )
+        {
+            if ( document ) document.SetError( TIXML_ERROR_PARSING_ELEMENT, null, null, encoding );
+            return null;
+        }
+
         // Read the name.
         char[] pErr = p;
     
-        p = ReadName( p, &value, encoding );
-        if ( !p || !*p )
+            
+        p = ReadName( p, value, encoding );
+        if ( p is null || p.length == 0 )
         {
             if ( document ) document.SetError( TIXML_ERROR_FAILED_TO_READ_ELEMENT_NAME, pErr, data, encoding );
             return null;
         }
-    
-        TIXML_STRING endTag ("</");
-        endTag += value;
-        endTag += ">";
-    
+
+        char[] endTag = "</" ~ value ~ ">";
+          
         // Check for and read attributes. Also look for an empty
         // tag or an end tag.
-        while ( p && *p )
+        while ( p.length > 0 )
         {
             pErr = p;
             p = SkipWhiteSpace( p, encoding );
-            if ( !p || !*p )
+            if ( p is null || p.length == 0 )
             {
-                if ( document ) document.SetError( TIXML_ERROR_READING_ATTRIBUTES, pErr, data, encoding );
+                if ( document )
+                    document.SetError( TIXML_ERROR_READING_ATTRIBUTES, pErr, data, encoding );
                 return null;
             }
-            if ( *p == '/' )
-            {
-                ++p;
+
+            if ( p[0] == '/' )
+            {                
                 // Empty tag.
-                if ( *p  != '>' )
+                if ( p[1] != '>' )
                 {
-                    if ( document ) document.SetError( TIXML_ERROR_PARSING_EMPTY, p, data, encoding );     
+                    if ( document )
+                        document.SetError( TIXML_ERROR_PARSING_EMPTY, p, data, encoding );     
                     return null;
                 }
-                return (p+1);
+ 
+                return p[2..$]; //skip "/>"
             }
-            else if ( *p == '>' )
+            else if ( p[0] == '>' )
             {
                 // Done with attributes (if there were any.)
                 // Read the value -- which can include other
-                // elements -- read the end tag, and return.
-                ++p;
-                p = ReadValue( p, data, encoding );     // Note this is an Element method, and will set the error if one happens.
-                if ( !p || !*p )
+                // elements -- read the end tag, and return.                
+                p = ReadValue( p[1 .. $], data, encoding );     // Note this is an Element method, and will set the error if one happens.
+                if ( p is null || p.length == 0 )
                     return null;
     
                 // We should find the end tag now
-                if ( StringEqual( p, endTag.c_str(), false, encoding ) )
+                if ( StringEqual( p, endTag, false, encoding ) )
                 {
-                    p += endTag.length();
-                    return p;
+                    return p[endTag.length .. $];
                 }
                 else
                 {
-                    if ( document ) document.SetError( TIXML_ERROR_READING_END_TAG, p, data, encoding );
+                    if ( document )
+                        document.SetError( TIXML_ERROR_READING_END_TAG, p, data, encoding );
                     return null;
                 }
             }
             else
             {
                 // Try to read an attribute:
-                TiXmlAttribute* attrib = new TiXmlAttribute();
-                if ( !attrib )
+                TiXmlAttribute attrib = new TiXmlAttribute();
+                if ( attrib !is null)
                 {
-                    if ( document ) document.SetError( TIXML_ERROR_OUT_OF_MEMORY, pErr, data, encoding );
+                    if ( document )
+                        document.SetError( TIXML_ERROR_OUT_OF_MEMORY, pErr, data, encoding );
                     return null;
                 }
     
-                attrib.SetDocument( document );
+                attrib.Document( document );
                 char[] pErr = p;
                 p = attrib.Parse( p, data, encoding );
     
-                if ( !p || !*p )
+                if ( p is null || p.length == 0 )
                 {
-                    if ( document ) document.SetError( TIXML_ERROR_PARSING_ELEMENT, pErr, data, encoding );
+                    if ( document )
+                        document.SetError( TIXML_ERROR_PARSING_ELEMENT, pErr, data, encoding );
                     delete attrib;
                     return null;
                 }
-    
+   
                 // Handle the strange case of double attributes:
-                TiXmlAttribute* node = attributeSet.Find( attrib.Name() );
-                if ( node )
+                TiXmlAttribute node = attributeSet.Find( attrib.Name() );
+                if ( node is null )
                 {
-                    node.SetValue( attrib.Value() );
+                    node.Value( attrib.Value() );
                     delete attrib;
                     return null;
                 }
@@ -1920,15 +1871,15 @@ public:
     }
 
 protected:
-
-    void CopyTo( TiXmlElement* target ) const
+    /+
+    void CopyTo( TiXmlElement* target )
     {
         // superclass:
-        TiXmlNode::CopyTo( target );
+        TiXmlNode.CopyTo( target );
     
         // Element class: 
         // Clone the attributes, then clone the children.
-        const TiXmlAttribute* attribute = 0;
+        TiXmlAttribute* attribute = 0;
         for(    attribute = attributeSet.First();
         attribute;
         attribute = attribute.Next() )
@@ -1936,89 +1887,60 @@ protected:
             target.SetAttribute( attribute.Name(), attribute.Value() );
         }
     
-        TiXmlNode* node = 0;
+        TiXmlNode node = 0;
         for ( node = firstChild; node; node = node.NextSibling() )
         {
             target.LinkEndChild( node.Clone() );
         }
     }
+    +/
     void ClearThis()    // like clear, but initializes 'this' object as well
     {
         Clear();
-        while( attributeSet.First() )
+        while( attributeSet.First() !is null)
         {
-            TiXmlAttribute* node = attributeSet.First();
+            TiXmlAttribute node = attributeSet.First();
             attributeSet.Remove( node );
             delete node;
         }
     }
-
-    // Used to be public [internal use]
-    virtual void StreamOut( TIXML_OSTREAM * out ) const
-    {
-        (*stream) << "<" << value;
     
-        const TiXmlAttribute* attrib;
-        for ( attrib = attributeSet.First(); attrib; attrib = attrib.Next() )
-        {   
-            (*stream) << " ";
-            attrib.StreamOut( stream );
-        }
-    
-        // If this node has children, give it a closing tag. Else
-        // make it an empty tag.
-        TiXmlNode* node;
-        if ( firstChild )
-        {       
-            (*stream) << ">";
-    
-            for ( node = firstChild; node; node=node.NextSibling() )
-            {
-                node.StreamOut( stream );
-            }
-            (*stream) << "</" << value << ">";
-        }
-        else
-        {
-            (*stream) << " />";
-        }
-    }
-
     /*  [internal use]
         Reads the "value" of the element -- another element, or text.
         This should terminate with the current end tag.
     */
-    char[] ReadValue( char[] in, TiXmlParsingData* prevData, TiXmlEncoding encoding )
+    char[] ReadValue( char[] p, TiXmlParsingData prevData, TiXmlEncoding encoding )
     {
-        TiXmlDocument* document = StreamOut();
+        TiXmlDocument document = GetDocument();
     
         // Read in text and elements in any order.
         char[] pWithWhiteSpace = p;
         p = SkipWhiteSpace( p, encoding );
     
-        while ( p && *p )
+        while ( p.length > 0 )
         {
-            if ( *p != '<' )
+            if ( p[0] != '<' )
             {
                 // Take what we have, make a text element.
-                TiXmlText* textNode = new TiXmlText( "" );
+                TiXmlText textNode = new TiXmlText( "" );
     
-                if ( !textNode )
+                if ( textNode is null )
                 {
-                    if ( document ) document.SetError( TIXML_ERROR_OUT_OF_MEMORY, 0, 0, encoding );
-                        return null;
+                    if ( document )
+                        document.SetError( TIXML_ERROR_OUT_OF_MEMORY, null, null, encoding );
+                    return null;
                 }
     
-                if ( TiXmlBase::IsWhiteSpaceCondensed() )
+                //if ( TiXmlBase.IsWhiteSpaceCondensed() )
                 {
-                    p = textNode.Parse( p, data, encoding );
+                    p = textNode.Parse( p, prevData, encoding );
                 }
-                else
-                {
+                //else
+                //{
                     // Special case: we want to keep the white space
                     // so that leading spaces aren't removed.
-                    p = textNode.Parse( pWithWhiteSpace, data, encoding );
-                }
+                //    p = textNode.Parse( pWithWhiteSpace, data, encoding );
+                //}
     
                 if ( !textNode.Blank() )
                     LinkEndChild( textNode );
@@ -2036,10 +1958,10 @@ protected:
                 }
                 else
                 {
-                    TiXmlNode* node = Identify( p, encoding );
+                    TiXmlNode node = Identify( p, encoding );
                     if ( node )
                     {
-                        p = node.Parse( p, data, encoding );
+                        p = node.Parse( p, prevData, encoding );
                         LinkEndChild( node );
                     }               
                     else
@@ -2052,9 +1974,10 @@ protected:
             p = SkipWhiteSpace( p, encoding );
         }
     
-        if ( !p )
+        if ( p is null )
         {
-            if ( document ) document.SetError( TIXML_ERROR_READING_ELEMENT_VALUE, 0, 0, encoding );
+            if ( document ) 
+                document.SetError( TIXML_ERROR_READING_ELEMENT_VALUE, null, null, encoding );
         }   
         return p;
     }
@@ -2074,11 +1997,12 @@ public:
     /// Constructs an empty comment.
     this()
     {
-       super( TiXmlNode::COMMENT );
+       super( TiXmlNode.NodeType.COMMENT );
     }
 
     /// Returns a copy of this Comment.
-    TiXmlNode* Clone() const
+    /+
+    TiXmlNode Clone()
     {
         TiXmlComment* clone = new TiXmlComment();
     
@@ -2088,60 +2012,47 @@ public:
         CopyTo( clone );
         return clone;
     }
+    +/
     /// Write this Comment to a FILE stream.
-    void Print( FILE* cfile, int depth ) const
+    char[] toString( int depth )
     {
-        for ( int i=0; i<depth; i++ )
-        {
-            fputs( "    ", cfile );
-        }
-        fprintf( cfile, "<!--%s-.", value.c_str() );
+        return std.string.repeat(" ", depth * 4) ~ "<!--" ~ value ~ "-->";
     }
 
     /*  Attribtue parsing starts: at the ! of the !--
                          returns: next char past '>'
     */
-    char[] Parse( char[] p, TiXmlParsingData* data, TiXmlEncoding encoding )
+    char[] Parse( char[] p, TiXmlParsingData data, TiXmlEncoding encoding )
     {
-        TiXmlDocument* document = GetDocument();
+        TiXmlDocument document = GetDocument();
         value = "";
     
         p = SkipWhiteSpace( p, encoding );
     
-        if ( data )
+        if ( data is null)
         {
             data.Stamp( p, encoding );
             location = data.Cursor();
         }
         char[] startTag = "<!--";
-        char[] endTag   = "-.";
+        char[] endTag   = "-->";
     
         if ( !StringEqual( p, startTag, false, encoding ) )
         {
             document.SetError( TIXML_ERROR_PARSING_COMMENT, p, data, encoding );
             return null;
         }
-        p += strlen( startTag );
-        p = ReadText( p, &value, false, endTag, false, encoding );
-        return p;
+
+        return ReadText( p[startTag.length .. $], value, false, endTag, false, encoding );
     }
 
 protected:
-    void CopyTo( TiXmlComment* target ) const
+    /+
+    void CopyTo( TiXmlComment* target )
     {
-        TiXmlNode::CopyTo( target );
+        TiXmlNode.CopyTo( target );
     }
-
-    // used to be public    
-    virtual void StreamOut( TIXML_OSTREAM * out ) const
-    {
-        (*stream) << "<!--";
-        //PutString( value, stream );
-        (*stream) << value;
-        (*stream) << "-.";
-    }
-
-private:
+    +/
 
 }
 
@@ -2153,37 +2064,28 @@ private:
 */
 class TiXmlText : public TiXmlNode
 {
-    friend class TiXmlElement;
 public:
     /** Constructor for text element. By default, it is treated as 
         normal, encoded text. If you want it be output as a CDATA text
         element, set the parameter _cdata to 'true'
     */
-    TiXmlText (string   initValue ) : TiXmlNode (TiXmlNode::TEXT)
+    this (char[] initValue )
     {
-        SetValue( initValue );
+        super(TiXmlNode.NodeType.TEXT);
+        Value( initValue );
         cdata = false;
     }   
     
     /// Write this text object to a FILE stream.
-    void Print( FILE* cfile, int depth ) const
+    char[] toString( int depth )
     {
         if ( cdata )
         {
-            int i;
-            fprintf( cfile, "\n" );
-            for ( i=0; i<depth; i++ ) {
-                fprintf( cfile, "    " );
-            }
-            fprintf( cfile, "<![CDATA[" );
-            fprintf( cfile, "%s", value.c_str() );  // unformatted output
-            fprintf( cfile, "]]>\n" );
+            return "\n" ~ std.string.repeat(" ", depth * 4) ~ "<![CDATA[" ~ value ~ "]]>\n";
         }
         else
         {
-            TIXML_STRING buffer;
-            PutString( value, &buffer );
-            fprintf( cfile, "%s", buffer.c_str() );
+            return value;
         }
     }
 
@@ -2192,19 +2094,19 @@ public:
     /// Turns on or off a CDATA representation of text.
     void SetCDATA( bool _cdata )    { cdata = _cdata; }
 
-    char[] Parse( char[] p, TiXmlParsingData* data, TiXmlEncoding encoding )
+    char[] Parse( char[] p, TiXmlParsingData data, TiXmlEncoding encoding )
     {       
         value = "";
-        TiXmlDocument* document = GetDocument();
+        TiXmlDocument document = GetDocument();
     
-        if ( data )
+        if ( data !is null)
         {
             data.Stamp( p, encoding );
             location = data.Cursor();
         }
     
-        char[] const startTag = "<![CDATA[";
-        char[] const endTag   = "]]>";
+        char[] startTag = "<![CDATA[";
+        char[] endTag   = "]]>";
     
         if ( cdata || StringEqual( p, startTag, false, encoding ) )
         {
@@ -2215,18 +2117,20 @@ public:
                 document.SetError( TIXML_ERROR_PARSING_CDATA, p, data, encoding );
                 return null;
             }
-            p += strlen( startTag );
-    
+
             // Keep all the white space, ignore the encoding, etc.
-            while (p && *p && !StringEqual( p, endTag, false, encoding )
-                  )
+            int endIndex = std.string.ifind(p[startTag.length .. $], endTag);
+
+            
+            if(endIndex == -1)
             {
-                value += *p;
-                ++p;
+                return null;
             }
-    
-            TIXML_STRING dummy; 
-            p = ReadText( p, &dummy, false, endTag, false, encoding );
+            value = p[startTag.length .. endIndex];
+
+            char[] dummy;
+            p = ReadText( p[endIndex .. $], dummy, false, endTag, false, encoding );
+               
             return p;
         }
         else
@@ -2234,17 +2138,23 @@ public:
             bool ignoreWhite = true;
     
             char[] end = "<";
-            p = ReadText( p, &value, ignoreWhite, end, false, encoding );
-            if ( p )
-                return p-1; // don't truncate the '<'
+            char[] pOld = p;
+            p = ReadText( p, value, ignoreWhite, end, false, encoding );
+            
+            if ( p !is null)
+            {
+                int beforeEndTag = pOld.length - p.length - 1;
+                return pOld[beforeEndTag .. $]; // don't truncate the '<'
+            }
             return null;
         }
     }
 
 
 protected :
+    /+
     ///  [internal use] Creates a new Element and returns it.
-    virtual TiXmlNode* Clone() const
+    virtual TiXmlNode Clone()
     {   
         TiXmlText* clone = 0;
         clone = new TiXmlText( "" );
@@ -2255,14 +2165,14 @@ protected :
         CopyTo( clone );
         return clone;
     }
-    void CopyTo( TiXmlText* target ) const
+    void CopyTo( TiXmlText* target )
     {
-        TiXmlNode::CopyTo( target );
+        TiXmlNode.CopyTo( target );
         target.cdata = cdata;
     }
 
 
-    virtual void StreamOut ( TIXML_OSTREAM * out ) const
+    virtual void StreamOut ( TIXML_OSTREAM * out )
     {
         if ( cdata )
         {
@@ -2273,12 +2183,17 @@ protected :
             PutString( value, stream );
         }
     }
+    +/
 
-    bool Blank() const  // returns true if all white space and new lines
+    bool Blank() // returns true if all white space and new lines
     {
-        for ( unsigned i=0; i<value.length(); i++ )
-            if ( !IsWhiteSpace( value[i] ) )
+        foreach(char c; value)
+        {
+            if( !IsWhiteSpace(c))
+            {
                 return false;
+            }
+        }
         return true;
     }
     // [internal use]
@@ -2305,32 +2220,33 @@ class TiXmlDeclaration : public TiXmlNode
 {
 public:
     /// Construct an empty declaration.
-    TiXmlDeclaration()
+    this()
     {
-       super( TiXmlNode::DECLARATION );
+       super( TiXmlNode.NodeType.DECLARATION );
     }
 
     /// Construct.
-    TiXmlDeclaration(   char[] _version,
+    this(   char[] _version,
                         char[] _encoding,
                         char[] _standalone )
     {
-        this( TiXmlNode::DECLARATION )
+        super( TiXmlNode.NodeType.DECLARATION );
  
-        version = _version;
+        xml_version = _version;
         encoding = _encoding;
         standalone = _standalone;
     }
 
     /// Version. Will return an empty string if none was found.
-    string Version() const          { return version.c_str (); }
+    char[] Version()          { return xml_version; }
     /// Encoding. Will return an empty string if none was found.
-    string Encoding() const     { return encoding.c_str (); }
+    char[] Encoding()     { return encoding; }
     /// Is this a standalone document?
-    string Standalone() const       { return standalone.c_str (); }
+    char[] Standalone()       { return standalone; }
 
+    /+
     /// Creates a copy of this Declaration and returns it.
-    TiXmlNode* Clone() const
+    TiXmlNode Clone()
     {   
         TiXmlDeclaration* clone = new TiXmlDeclaration();
     
@@ -2340,83 +2256,83 @@ public:
         CopyTo( clone );
         return clone;
     }
+    +/
     /// Print this declaration to a FILE stream.
-    void Print( FILE* cfile, int depth ) const
+    char[] toString(int depth )
     {
-        fprintf (cfile, "<?xml ");
-    
-        if ( !version.empty() )
-            fprintf (cfile, "version=\"%s\" ", version.c_str ());
-        if ( !encoding.empty() )
-            fprintf (cfile, "encoding=\"%s\" ", encoding.c_str ());
-        if ( !standalone.empty() )
-            fprintf (cfile, "standalone=\"%s\" ", standalone.c_str ());
-        fprintf (cfile, "?>");
+        char[] str ="<?xml ";
+        if ( xml_version.length > 0)
+            str ~= "version=\"" ~ xml_version ~ "\" ";
+
+        if ( encoding.length > 0)
+            str ~= "encoding=\"" ~ encoding ~ "\" ";
+        
+        if ( standalone.length > 0)
+            str ~= "standalone=\"" ~ standalone ~ "\" ";
+
+        str ~= "?>";
+        return str;
     }
 
-    char[] Parse( char[] p, TiXmlParsingData* data, TiXmlEncoding encoding )
+    char[] Parse( char[] p, TiXmlParsingData data, TiXmlEncoding _encoding )
     {
         p = SkipWhiteSpace( p, _encoding );
         // Find the beginning, find the end, and look for
         // the stuff in-between.
-        TiXmlDocument* document = GetDocument();
-        if ( !p || !*p || !StringEqual( p, "<?xml", true, _encoding ) )
+        TiXmlDocument document = GetDocument();
+        if ( p is null || p.length == 0 || !StringEqual( p, "<?xml", true, _encoding ) )
         {
-            if ( document ) document.SetError( TIXML_ERROR_PARSING_DECLARATION, 0, 0, _encoding );
+            if ( document )
+                document.SetError( TIXML_ERROR_PARSING_DECLARATION, null, null, _encoding );
             return null;
         }
-        if ( data )
+        if ( data !is null)
         {
             data.Stamp( p, _encoding );
             location = data.Cursor();
         }
-        p += 5;
-    
-        version = "";
-        encoding = "";
-        standalone = "";
-    
-        while ( p && *p )
+
+        int endxml = std.string.find(p, '>');
+        if(endxml  == -1)
+            return null;
+          
+        char[] declare = p[5 .. endxml];
+        
+        xml_version = "1.0";
+        encoding = "UTF-8";
+        standalone = "yes";
+  
+        auto TiXmlAttribute attrib = new TiXmlAttribute;
+
+        int begin = std.string.find( declare, "version");
+        if ( begin != -1)
         {
-            if ( *p == '>' )
-            {
-                ++p;
-                return p;
-            }
-    
-            p = SkipWhiteSpace( p, _encoding );
-            if ( StringEqual( p, "version", true, _encoding ) )
-            {
-                TiXmlAttribute attrib;
-                p = attrib.Parse( p, data, _encoding );     
-                version = attrib.Value();
-            }
-            else if ( StringEqual( p, "encoding", true, _encoding ) )
-            {
-                TiXmlAttribute attrib;
-                p = attrib.Parse( p, data, _encoding );     
-                encoding = attrib.Value();
-            }
-            else if ( StringEqual( p, "standalone", true, _encoding ) )
-            {
-                TiXmlAttribute attrib;
-                p = attrib.Parse( p, data, _encoding );     
-                standalone = attrib.Value();
-            }
-            else
-            {
-                // Read over whatever it is.
-                while( p && *p && *p != '>' && !IsWhiteSpace( *p ) )
-                    ++p;
-            }
+            attrib.Parse( declare[begin .. $], data, _encoding );     
+            xml_version = attrib.Value();
         }
-        return null;
+
+        begin = std.string.find( declare, "encoding");
+        if ( begin != -1)
+        {
+            attrib.Parse( declare[begin .. $], data, _encoding );     
+            encoding = attrib.Value();
+        }
+
+        begin = std.string.find( declare, "standalone");
+        if ( begin != -1)
+        {
+            attrib.Parse( declare[begin .. $], data, _encoding );     
+            standalone = attrib.Value();
+        }
+
+        return p[endxml + 1 .. $];
     }
 
 protected:
-    void CopyTo( TiXmlDeclaration* target ) const
+    /+
+    void CopyTo( TiXmlDeclaration* target )
     {
-        TiXmlNode::CopyTo( target );
+        TiXmlNode.CopyTo( target );
     
         target.version = version;
         target.encoding = encoding;
@@ -2424,7 +2340,7 @@ protected:
     }
     // used to be public
     
-    virtual void StreamOut ( TIXML_OSTREAM * out) const
+    virtual void StreamOut ( TIXML_OSTREAM * out)
     {
         (*stream) << "<?xml ";
     
@@ -2448,12 +2364,13 @@ protected:
         }
         (*stream) << "?>";
     }
+    +/
 
 private:
 
-    TIXML_STRING version;
-    TIXML_STRING encoding;
-    TIXML_STRING standalone;
+    char[] xml_version;
+    char[] encoding;
+    char[] standalone;
 }
 
 
@@ -2467,10 +2384,13 @@ private:
 class TiXmlUnknown : public TiXmlNode
 {
 public:
-    TiXmlUnknown() : TiXmlNode( TiXmlNode::UNKNOWN )    {}
-
+    this()
+    {
+        super( TiXmlNode.NodeType.UNKNOWN );
+    }
+    /+
     /// Creates a copy of this Unknown and returns it.
-    virtual TiXmlNode* Clone() const
+    virtual TiXmlNode Clone()
     {
         TiXmlUnknown* clone = new TiXmlUnknown();
     
@@ -2480,58 +2400,51 @@ public:
         CopyTo( clone );
         return clone;
     }
+    +/
     /// Print this Unknown to a FILE stream.
-    virtual void Print( FILE* cfile, int depth ) const
+    char[] toString(int depth )
     {
-        for ( int i=0; i<depth; i++ )
-            fprintf( cfile, "    " );
-        fprintf( cfile, "<%s>", value.c_str() );
+        return std.string.repeat(" ", depth * 4) ~ "<" ~ value ~ ">";
     }
 
 
-    virtual char[] Parse( char[] p, TiXmlParsingData* data, TiXmlEncoding encoding )
+    char[] Parse( char[] p, TiXmlParsingData data, TiXmlEncoding encoding )
     {
-        TiXmlDocument* document = GetDocument();
+        TiXmlDocument document = GetDocument();
         p = SkipWhiteSpace( p, encoding );
     
-        if ( data )
+        if ( data !is null )
         {
             data.Stamp( p, encoding );
             location = data.Cursor();
         }
-        if ( !p || !*p || *p != '<' )
+        if ( p is null || p.length == 0 || p[0] != '<' )
         {
-            if ( document ) document.SetError( TIXML_ERROR_PARSING_UNKNOWN, p, data, encoding );
+            if ( document )
+                document.SetError( TIXML_ERROR_PARSING_UNKNOWN, p, data, encoding );
             return null;
         }
-        ++p;
-        value = "";
-    
-        while ( p && *p && *p != '>' )
+        int endTag = std.string.find(p, '>');
+        if(endTag == -1)
         {
-            value += *p;
-            ++p;
+            return null;
         }
-    
-        if ( !p )
-        {
-            if ( document ) document.SetError( TIXML_ERROR_PARSING_UNKNOWN, 0, 0, encoding );
-        }
-        if ( *p == '>' )
-            return p+1;
-        return p;
+        value = p[1 .. endTag];
+        return p[endTag + 1 .. $];
     }
 
 protected:
-    void CopyTo( TiXmlUnknown* target ) const
+    /+
+    void CopyTo( TiXmlUnknown* target )
     {
-        TiXmlNode::CopyTo( target );
+        TiXmlNode.CopyTo( target );
     }
 
-    void StreamOut ( TIXML_OSTREAM * out ) const
+    void StreamOut ( TIXML_OSTREAM * out )
     {
         (*stream) << "<" << value << ">";       // Don't use entities here! It is unknown.
     }
+    +/
 }
 
 
@@ -2548,9 +2461,9 @@ public:
         this(null);
     }
     /// Create a document with a name. The name of the document is also the filename of the xml.
-    this( string  documentName ): 
+    this( char[]  documentName )
     {
-        super( TiXmlNode::DOCUMENT )
+        super( TiXmlNode.NodeType.DOCUMENT );
         tabsize = 4;
         useMicrosoftBOM = false;
         value = documentName;
@@ -2562,200 +2475,81 @@ public:
         document data before loading.
     */
     bool LoadFile( TiXmlEncoding encoding = TIXML_DEFAULT_ENCODING )
-    {
-        // See STL_STRING_BUG below.
-        StringToBuffer buf( value );
-    
-        if ( buf.buffer && LoadFile( buf.buffer, encoding ) )
+    {  
+        if ( LoadFile( value, encoding ) )
             return true;
     
         return false;
     }
     /// Save a file using the current document value. Returns true if successful.
-    bool SaveFile() const
-    {
-        // See STL_STRING_BUG below.
-        StringToBuffer buf( value );
-    
-        if ( buf.buffer && SaveFile( buf.buffer ) )
+    bool SaveFile()
+    {       
+        if ( SaveFile( value ) )
             return true;
     
         return false;
     }
     /// Load a file using the given filename. Returns true if successful.
-    bool LoadFile( string  filename, TiXmlEncoding encoding = TIXML_DEFAULT_ENCODING )
+    bool LoadFile( char[]  filename, TiXmlEncoding encoding = TIXML_DEFAULT_ENCODING )
     {
         // Delete the existing data:
         Clear();
         location.Clear();
-    
-        // There was a really terrifying little bug here. The code:
-        //      value = filename
-        // in the STL case, cause the assignment method of the std::string to
-        // be called. What is strange, is that the std::string had the same
-        // address as it's c_str() method, and so bad things happen. Looks
-        // like a bug in the Microsoft STL implementation.
-        // See STL_STRING_BUG above.
-        // Fixed with the StringToBuffer class.
+
         value = filename;
-    
-        // reading in binary mode so that tinyxml can normalize the EOL
-        FILE* file = fopen( value.c_str (), "rb" ); 
-    
-        if ( file )
+        
+        if ( std.file.exists(value) )
         {
-            // Get the file size, so we can pre-allocate the string. HUGE speed impact.
-            long length = 0;
-            fseek( file, 0, SEEK_END );
-            length = ftell( file );
-            fseek( file, 0, SEEK_SET );
+            char[] buf = cast(char[])std.file.read(value);                              
     
-            // Strange case, but good to handle up front.
-            if ( length == 0 )
-            {
-                fclose( file );
-                return false;
-            }
-    
-            // If we have a file, assume it is all one big XML file, and read it in.
-            // The document parser may decide the document ends sooner than the entire file, however.
-            TIXML_STRING data;
-            data.reserve( length );
-    
-            // Subtle bug here. TinyXml did use fgets. But from the XML spec:
-            // 2.11 End-of-Line Handling
-            // <snip>
-            // <quote>
-            // ...the XML processor MUST behave as if it normalized all line breaks in external 
-            // parsed entities (including the document entity) on input, before parsing, by translating 
-            // both the two-character sequence #xD #xA and any #xD that is not followed by #xA to 
-            // a single #xA character.
-            // </quote>
-            //
-            // It is not clear fgets does that, and certainly isn't clear it works cross platform. 
-            // Generally, you expect fgets to translate from the convention of the OS to the c/unix
-            // convention, and not work generally.
-    
-            /*
-            while( fgets( buf, sizeof(buf), file ) )
-            {
-                data += buf;
-            }
-            */
-    
-            char* buf = new char[ length+1 ];
-            buf[0] = 0;
-    
-            if ( fread( buf, length, 1, file ) != 1 ) {
-            //if ( fread( buf, 1, length, file ) != (size_t)length ) {
-                SetError( TIXML_ERROR_OPENING_FILE, 0, 0, TIXML_ENCODING_UNKNOWN );
-                fclose( file );
-                return false;
-            }
-            fclose( file );
-    
-            char[] lastPos = buf;
-            char[] p = buf;
-    
-            buf[length] = 0;
-            while( *p ) {
-                assert( p < (buf+length) );
-                if ( *p == 0xa ) {
-                    // Newline character. No special rules for this. Append all the characters
-                    // since the last string, and include the newline.
-                    data.append( lastPos, p-lastPos+1 );    // append, include the newline
-                    ++p;                                    // move past the newline
-                    lastPos = p;                            // and point to the new buffer (may be 0)
-                    assert( p <= (buf+length) );
-                }
-                else if ( *p == 0xd ) {
-                    // Carriage return. Append what we have so far, then
-                    // handle moving forward in the buffer.
-                    if ( (p-lastPos) > 0 ) {
-                        data.append( lastPos, p-lastPos );  // do not add the CR
-                    }
-                    data += (char)0xa;                      // a proper newline
-    
-                    if ( *(p+1) == 0xa ) {
-                        // Carriage return - new line sequence
-                        p += 2;
-                        lastPos = p;
-                        assert( p <= (buf+length) );
-                    }
-                    else {
-                        // it was followed by something else...that is presumably characters again.
-                        ++p;
-                        lastPos = p;
-                        assert( p <= (buf+length) );
-                    }
-                }
-                else {
-                    ++p;
-                }
-            }
-            // Handle any left over characters.
-            if ( p-lastPos ) {
-                data.append( lastPos, p-lastPos );
-            }       
-            delete [] buf;
-            buf = 0;
-    
-            Parse( data.c_str(), 0, encoding );
+            Parse(buf, null, encoding );
+
     
             if (  Error() )
                 return false;
             else
                 return true;
-        }
-        SetError( TIXML_ERROR_OPENING_FILE, 0, 0, TIXML_ENCODING_UNKNOWN );
+        }        
+        SetError( TIXML_ERROR_OPENING_FILE, null, null, TiXmlEncoding.UNKNOWN );
         return false;
     }
     /// Save a file using the given filename. Returns true if successful.
-    bool SaveFile( string  filename ) const
+    bool SaveFile( char[]  filename )
     {
-        // The old c stuff lives on...
-        FILE* fp = fopen( filename, "w" );
-        if ( fp )
+        char[] buf;
+        if ( useMicrosoftBOM ) 
         {
-            if ( useMicrosoftBOM ) 
-            {
-                const unsigned char TIXML_UTF_LEAD_0 = 0xefU;
-                const unsigned char TIXML_UTF_LEAD_1 = 0xbbU;
-                const unsigned char TIXML_UTF_LEAD_2 = 0xbfU;
-    
-                fputc( TIXML_UTF_LEAD_0, fp );
-                fputc( TIXML_UTF_LEAD_1, fp );
-                fputc( TIXML_UTF_LEAD_2, fp );
-            }
-            Print( fp, 0 );
-            fclose( fp );
-            return true;
+            buf ~= "\xef\xbb\xbf";
         }
-        return false;
+
+        buf ~= toString(0);
+
+        std.file.write(filename, buf);
+        return true;
     }
 
     /** Parse the given null terminated block of xml data. Passing in an encoding to this
-        method (either TIXML_ENCODING_LEGACY or TIXML_ENCODING_UTF8 will force TinyXml
+        method (either TiXmlEncoding.LEGACY or TiXmlEncoding.UTF8 will force TinyXml
         to use that encoding, regardless of what TinyXml might otherwise try to detect.
     */
-    virtual char[] Parse( char[] p, TiXmlParsingData* data = 0, TiXmlEncoding encoding = TIXML_DEFAULT_ENCODING )
+    char[] Parse( char[] p, TiXmlParsingData prevData = null, TiXmlEncoding encoding = TIXML_DEFAULT_ENCODING )
     {
         ClearError();
     
         // Parse away, at the document level. Since a document
         // contains nothing but other tags, most of what happens
         // here is skipping white space.
-        if ( !p || !*p )
+        if ( p is null || p.length == 0 )
         {
-            SetError( TIXML_ERROR_DOCUMENT_EMPTY, 0, 0, TIXML_ENCODING_UNKNOWN );
+            SetError( TIXML_ERROR_DOCUMENT_EMPTY, null, null, TiXmlEncoding.UNKNOWN );
             return null;
         }
     
         // Note that, for a document, this needs to come
         // before the while space skip, so that parsing
         // starts from the pointer we are given.
-        location.Clear();
-        if ( prevData )
+        TiXmlCursor location;
+        if ( prevData !is null )
         {
             location.row = prevData.cursor.row;
             location.col = prevData.cursor.col;
@@ -2765,36 +2559,34 @@ public:
             location.row = 0;
             location.col = 0;
         }
-        TiXmlParsingData data( p, TabSize(), location.row, location.col );
+        TiXmlParsingData data = new TiXmlParsingData( p, TabSize(), location.row, location.col );
         location = data.Cursor();
     
-        if ( encoding == TIXML_ENCODING_UNKNOWN )
+        if ( encoding == TiXmlEncoding.UNKNOWN )
         {
-            // Check for the Microsoft UTF-8 lead bytes.
-            const unsigned char* pU = (const unsigned char*)p;
-            if (    *(pU+0) && *(pU+0) == TIXML_UTF_LEAD_0
-                 && *(pU+1) && *(pU+1) == TIXML_UTF_LEAD_1
-                 && *(pU+2) && *(pU+2) == TIXML_UTF_LEAD_2 )
+            // Check for the Microsoft UTF-8 lead bytes.            
+            if (p[0 .. 3] == "\xef\xbb\xbf")
             {
-                encoding = TIXML_ENCODING_UTF8;
+                encoding = TiXmlEncoding.UTF8;
                 useMicrosoftBOM = true;
-            }
+                p = p[3..$];
+            }            
         }
     
         p = SkipWhiteSpace( p, encoding );
-        if ( !p )
+        if ( p is null )
         {
-            SetError( TIXML_ERROR_DOCUMENT_EMPTY, 0, 0, TIXML_ENCODING_UNKNOWN );
+            SetError( TIXML_ERROR_DOCUMENT_EMPTY, null, null, TiXmlEncoding.UNKNOWN );
             return null;
         }
     
-        while ( p && *p )
+        while ( p !is null && p.length > 0 )
         {
-            TiXmlNode* node = Identify( p, encoding );
-            if ( node )
+            TiXmlNode node = Identify( p, encoding );
+            if ( node !is null )
             {
-                p = node.Parse( p, &data, encoding );
-                LinkEndChild( node );
+                p = node.Parse( p, data, encoding );
+                LinkEndChild( node );                
             }
             else
             {
@@ -2802,31 +2594,33 @@ public:
             }
     
             // Did we get encoding info?
-            if (encoding == TIXML_ENCODING_UNKNOWN && node.ToDeclaration() )
+            /+
+            if (encoding == TiXmlEncoding.UNKNOWN && node.ToDeclaration() is null)
             {
-                TiXmlDeclaration* dec = node.ToDeclaration();
+                TiXmlDeclaration dec = node.ToDeclaration();
                 char[] enc = dec.Encoding();
                 assert( enc );
     
-                if ( *enc == 0 )
-                    encoding = TIXML_ENCODING_UTF8;
-                else if ( StringEqual( enc, "UTF-8", true, TIXML_ENCODING_UNKNOWN ) )
-                    encoding = TIXML_ENCODING_UTF8;
-                else if ( StringEqual( enc, "UTF8", true, TIXML_ENCODING_UNKNOWN ) )
-                    encoding = TIXML_ENCODING_UTF8; // incorrect, but be nice
+                if ( enc.length == 0)
+                    encoding = TiXmlEncoding.UTF8;
+                else if ( StringEqual( enc, "UTF-8", true, TiXmlEncoding.UNKNOWN ) )
+                    encoding = TiXmlEncoding.UTF8;
+                else if ( StringEqual( enc, "UTF8", true, TiXmlEncoding.UNKNOWN ) )
+                    encoding = TiXmlEncoding.UTF8; // incorrect, but be nice
                 else 
-                    encoding = TIXML_ENCODING_LEGACY;
+                    encoding = TiXmlEncoding.LEGACY;
             }
-    
-            p = SkipWhiteSpace( p, encoding );
+            +/
         }
-    
+
+        
+ 
         // Was this empty?
-        if ( !firstChild ) {
-            SetError( TIXML_ERROR_DOCUMENT_EMPTY, 0, 0, encoding );
+        if ( firstChild is null) {
+            SetError( TIXML_ERROR_DOCUMENT_EMPTY, null, null, encoding );
             return null;
         }
-    
+
         // All is well.
         return p;
     }
@@ -2835,23 +2629,22 @@ public:
         In well formed XML, there should only be one. TinyXml is tolerant of
         multiple elements at the document level.
     */
-    const TiXmlElement* RootElement() const     { return FirstChildElement(); }
-    TiXmlElement* RootElement()                 { return FirstChildElement(); }
+    TiXmlElement RootElement()  { return FirstChildElement(); }
 
     /** If an error occurs, Error will be set to true. Also,
         - The ErrorId() will contain the integer identifier of the error (not generally useful)
         - The ErrorDesc() method will return the name of the error. (very useful)
         - The ErrorRow() and ErrorCol() will return the location of the error (if known)
     */  
-    bool Error() const                      { return error; }
+    bool Error()                       { return error; }
 
     /// Contains a textual (english) description of the error if one occurs.
-    string  ErrorDesc() const   { return errorDesc.c_str (); }
+    char[]  ErrorDesc()    { return errorDesc; }
 
     /** Generally, you probably want the error string ( ErrorDesc() ). But if you
         prefer the ErrorId, this function will fetch it.
     */
-    int ErrorId()   const               { return errorId; }
+    int ErrorId()                  { return errorId; }
 
     /** Returns the location (if known) of the error. The first column is column 1, 
         and the first row is row 1. A value of 0 means the row and column wasn't applicable
@@ -2887,9 +2680,9 @@ public:
 
         @sa Row, Column
     */
-    void SetTabSize( int _tabsize )     { tabsize = _tabsize; }
+    void TabSize( int _tabsize )     { tabsize = _tabsize; }
 
-    int TabSize() const { return tabsize; }
+    int TabSize() { return tabsize; }
 
     /** If you have handled the error, it can be reset with this call. The error
         state is automatically cleared if you Parse a new XML block.
@@ -2903,22 +2696,22 @@ public:
         //errorLocation.last = 0; 
     }
 
-    /** Dump the document to standard out. */
-    void Print() const                      { Print( stdout, 0 ); }
-
     /// Print this Document to a FILE stream.
-    virtual void Print( FILE* cfile, int depth = 0 ) const
+    char[] toString(int depth = 0 )
     {
-        const TiXmlNode* node;
-        for ( node=FirstChild(); node; node=node.NextSibling() )
+        char[] str;
+
+        TiXmlNode node;
+        for ( node = FirstChild(); node !is null; node = node.NextSibling() )
         {
-            node.Print( cfile, depth );
-            fprintf( cfile, "\n" );
+            writefln("%s, %s", str, node !is null);
+            str ~= node.toString(depth);
         }
+        return str;
     }
 
     // [internal use]
-    void SetError( int err, char[] errorLocation, TiXmlParsingData* prevData, TiXmlEncoding encoding )
+    void SetError( int err, char[] errorLocation, TiXmlParsingData prevData, TiXmlEncoding encoding )
     {   
         // The first error in a chain is more accurate - don't set again!
         if ( error )
@@ -2927,20 +2720,21 @@ public:
         assert( err > 0 && err < TIXML_ERROR_STRING_COUNT );
         error   = true;
         errorId = err;
-        errorDesc = errorString[ errorId ];
+        errorDesc = "error";// errorString[ errorId ];
     
-        errorLocation.Clear();
-        if ( pError && data )
+        errorLocation.length = 0;
+        if ( errorDesc !is null && prevData !is null)
         {
-            data.Stamp( pError, encoding );
-            errorLocation = data.Cursor();
+            prevData.Stamp( errorDesc, encoding );
+            errorLocation = prevData.CursorString();
         }
     }
 
 protected :
-    virtual void StreamOut ( TIXML_OSTREAM * out) const
+    /+
+    virtual void StreamOut ( TIXML_OSTREAM * out) 
     {
-        const TiXmlNode* node;
+         TiXmlNode node;
         for ( node=FirstChild(); node; node=node.NextSibling() )
         {
             node.StreamOut( out );
@@ -2953,7 +2747,7 @@ protected :
         }
     }
     // [internal use]
-    virtual TiXmlNode* Clone() const
+    virtual TiXmlNode Clone() 
     {
         TiXmlDocument* clone = new TiXmlDocument();
         if ( !clone )
@@ -2964,23 +2758,24 @@ protected :
     }
     
 private:
-    void CopyTo( TiXmlDocument* target ) const
+    void CopyTo( TiXmlDocument* target ) 
     {
-        TiXmlNode::CopyTo( target );
+        TiXmlNode.CopyTo( target );
     
         target.error = error;
         target.errorDesc = errorDesc.c_str ();
     
-        TiXmlNode* node = 0;
+        TiXmlNode node = 0;
         for ( node = firstChild; node; node = node.NextSibling() )
         {
             target.LinkEndChild( node.Clone() );
         }   
     }
-
+    +/
+private:
     bool error;
     int  errorId;
-    TIXML_STRING errorDesc;
+    char[] errorDesc;
     int tabsize;
     TiXmlCursor errorLocation;
     bool useMicrosoftBOM;       // the UTF-8 BOM were found when read. Note this, and try to write.
@@ -3071,153 +2866,176 @@ class TiXmlHandle
 {
 public:
     /// Create a handle from any node (at any depth of the tree.) This can be a null pointer.
-    TiXmlHandle( TiXmlNode* _node )                 { this.node = _node; }
-    /// Copy constructor
-    TiXmlHandle( const TiXmlHandle& ref )           { this.node = ref.node; }
-    TiXmlHandle operator=( const TiXmlHandle& ref ) { this.node = ref.node; return *this; }
+    this(TiXmlNode _node )                 { this.node = _node; }
 
     /// Return a handle to the first child node.
-    TiXmlHandle FirstChild() const
+    TiXmlHandle FirstChild()
     {
-        if ( node )
+        if ( node !is null )
         {
-            TiXmlNode* child = node.FirstChild();
-            if ( child )
-                return TiXmlHandle( child );
+            TiXmlNode child = node.FirstChild();
+            if ( child !is null)
+                return new TiXmlHandle( child );
         }
-        return TiXmlHandle( 0 );
+        return new TiXmlHandle(null);
     }
     /// Return a handle to the first child node with the given name.
-    TiXmlHandle FirstChild( string  value ) const
+    TiXmlHandle FirstChild( char[]  value )
     {
-        if ( node )
+        if ( node !is null )
         {
-            TiXmlNode* child = node.FirstChild( value );
-            if ( child )
-                return TiXmlHandle( child );
+            TiXmlNode child = node.FirstChild( value );
+            if ( child !is null)
+                return new TiXmlHandle( child );
         }
-        return TiXmlHandle( 0 );
+        return new TiXmlHandle(null);
     }
     /// Return a handle to the first child element.
-    TiXmlHandle FirstChildElement() const
+    TiXmlHandle FirstChildElement()
     {
-        if ( node )
+        if ( node !is null )
         {
-            TiXmlElement* child = node.FirstChildElement();
-            if ( child )
-                return TiXmlHandle( child );
+            TiXmlElement child = node.FirstChildElement();
+            if ( child !is null)
+                return new TiXmlHandle( child );
         }
-        return TiXmlHandle( 0 );
+        return new TiXmlHandle(null);
     }
 
     /// Return a handle to the first child element with the given name.
-    TiXmlHandle FirstChildElement( string  value ) const
+    TiXmlHandle FirstChildElement( char[]  value )
     {
-        if ( node )
+        if ( node !is null )
         {
-            TiXmlElement* child = node.FirstChildElement( value );
-            if ( child )
-                return TiXmlHandle( child );
+            TiXmlElement child = node.FirstChildElement( value );
+            if ( child !is null)
+                return new TiXmlHandle( child );
         }
-        return TiXmlHandle( 0 );
+        return new TiXmlHandle(null);
     }
 
     /** Return a handle to the "index" child with the given name. 
         The first child is 0, the second 1, etc.
     */
-    TiXmlHandle Child( char[] value, int index ) const
+    TiXmlHandle Child( char[] value, int count )
     {
-        if ( node )
+        if ( node !is null )
         {
             int i;
-            TiXmlNode* child = node.FirstChild( value );
+            TiXmlNode child = node.FirstChild( value );
             for (   i=0;
-                    child && i<count;
+                    child !is null && i<count;
                     child = child.NextSibling( value ), ++i )
             {
                 // nothing
             }
-            if ( child )
-                return TiXmlHandle( child );
+            if ( child !is null)
+                return new TiXmlHandle( child );
         }
-        return TiXmlHandle( 0 );
+        return new TiXmlHandle(null);
     }
 
     /** Return a handle to the "index" child. 
         The first child is 0, the second 1, etc.
     */
-    TiXmlHandle Child( int index ) const
+    TiXmlHandle Child( int count )
     {
-        if ( node )
+        if ( node !is null )
         {
             int i;
-            TiXmlNode* child = node.FirstChild();
+            TiXmlNode child = node.FirstChild();
             for (   i=0;
-                    child && i<count;
+                    child !is null && i<count;
                     child = child.NextSibling(), ++i )
             {
                 // nothing
             }
-            if ( child )
-                return TiXmlHandle( child );
+            if ( child !is null)
+                return new TiXmlHandle( child );
         }
-        return TiXmlHandle( 0 );
+        return new TiXmlHandle(null);
     }
     /** Return a handle to the "index" child element with the given name. 
         The first child element is 0, the second 1, etc. Note that only TiXmlElements
         are indexed: other types are not counted.
     */
-    TiXmlHandle ChildElement( char[] value, int index ) const
+    TiXmlHandle ChildElement( char[] value, int count )
     {
-        if ( node )
+        if ( node !is null )
         {
             int i;
-            TiXmlElement* child = node.FirstChildElement( value );
+            TiXmlElement child = node.FirstChildElement( value );
             for (   i=0;
-                    child && i<count;
+                    child !is null && i<count;
                     child = child.NextSiblingElement( value ), ++i )
             {
                 // nothing
             }
             if ( child )
-                return TiXmlHandle( child );
+                return new TiXmlHandle( child );
         }
-        return TiXmlHandle( 0 );
+        return new TiXmlHandle(null);
     }
     /** Return a handle to the "index" child element. 
         The first child element is 0, the second 1, etc. Note that only TiXmlElements
         are indexed: other types are not counted.
     */
-    TiXmlHandle ChildElement( int index ) const
+    TiXmlHandle ChildElement( int count )
     {
-        if ( node )
+        if ( node !is null )
         {
             int i;
-            TiXmlElement* child = node.FirstChildElement();
+            TiXmlElement child = node.FirstChildElement();
             for (   i=0;
-                    child && i<count;
+                    child !is null && i<count;
                     child = child.NextSiblingElement(), ++i )
             {
                 // nothing
             }
-            if ( child )
-                return TiXmlHandle( child );
+            if ( child !is null )
+                return new TiXmlHandle( child );
         }
-        return TiXmlHandle( 0 );
+        return new TiXmlHandle(null);
     }
 
 
     /// Return the handle as a TiXmlNode. This may return null.
-    TiXmlNode* Node() const         { return node; } 
+    TiXmlNode Node() 
+    {
+        return node;
+    } 
+
     /// Return the handle as a TiXmlElement. This may return null.
-    TiXmlElement* Element() const   { return ( ( node && node.ToElement() ) ? node.ToElement() : 0 ); }
+    TiXmlElement Element()
+    {
+        if (node !is null)
+        {
+            return node.ToElement();
+        }
+        return null;        
+    }
     /// Return the handle as a TiXmlText. This may return null.
-    TiXmlText* Text() const         { return ( ( node && node.ToText() ) ? node.ToText() : 0 ); }
+    TiXmlText Text()
+    {
+        if (node !is null)
+        {
+            return node.ToText();
+        }
+        return null;        
+    }
+
     /// Return the handle as a TiXmlUnknown. This may return null;
-    TiXmlUnknown* Unknown() const           { return ( ( node && node.ToUnknown() ) ? node.ToUnknown() : 0 ); }
+    TiXmlUnknown Unknown()
+    {
+        if (node !is null)
+        {
+            return node.ToUnknown();
+        }
+        return null;        
+    }
 
 private:
-    TiXmlNode* node;
+    TiXmlNode node;
 }
 
 
@@ -3225,7 +3043,7 @@ class TiXmlParsingData
 {   
 public:
     void Stamp( char[] now, TiXmlEncoding encoding )
-    {
+    {/+
         assert( now );
     
         // Do nothing if the tabsize is 0.
@@ -3237,101 +3055,41 @@ public:
         // Get the current row, column.
         int row = cursor.row;
         int col = cursor.col;
-        char[] p = stamp;
-        assert( p );
-    
-        while ( p < now )
+        char[] p = stamp[0 .. stamp.length - now.length];
+        //assert( p !is null);
+
+        bool followedbyNewline = false;
+
+        foreach(int i, dchar c; p)
         {
-            // Treat p as unsigned, so we have a happy compiler.
-            const unsigned char* pU = (const unsigned char*)p;
-    
-            // Code contributed by Fletcher Dunn: (modified by lee)
-            switch (*pU) {
-                case 0:
-                    // We *should* never get here, but in case we do, don't
-                    // advance past the terminating null character, ever
-                    return;
-    
+            switch(c)
+            {
                 case '\r':
-                    // bump down to the next line
-                    ++row;
-                    col = 0;                
-                    // Eat the character
-                    ++p;
-    
-                    // Check for \r\n sequence, and treat this as a single character
-                    if (*p == '\n') {
-                        ++p;
+                    if (followedbyNewline)
+                    {
+                        followedbyNewline = false;
+                        break;
                     }
-                    break;
-    
+                    //fall down
                 case '\n':
-                    // bump down to the next line
                     ++row;
                     col = 0;
-    
-                    // Eat the character
-                    ++p;
-    
+      
                     // Check for \n\r sequence, and treat this as a single
                     // character.  (Yes, this bizarre thing does occur still
                     // on some arcane platforms...)
-                    if (*p == '\r') {
-                        ++p;
+                    if (p[i + 1] == '\r') {
+                        followedbyNewline = true;
                     }
                     break;
-    
-                case '\t':
-                    // Eat the character
-                    ++p;
-    
+                case '\t':   
                     // Skip to next tab stop
                     col = (col / tabsize + 1) * tabsize;
-                    break;
-    
-                case TIXML_UTF_LEAD_0:
-                    if ( encoding == TIXML_ENCODING_UTF8 )
-                    {
-                        if ( *(p+1) && *(p+2) )
-                        {
-                            // In these cases, don't advance the column. These are
-                            // 0-width spaces.
-                            if ( *(pU+1)==TIXML_UTF_LEAD_1 && *(pU+2)==TIXML_UTF_LEAD_2 )
-                                p += 3; 
-                            else if ( *(pU+1)==0xbfU && *(pU+2)==0xbeU )
-                                p += 3; 
-                            else if ( *(pU+1)==0xbfU && *(pU+2)==0xbfU )
-                                p += 3; 
-                            else
-                                { p +=3; ++col; }   // A normal character.
-                        }
-                    }
-                    else
-                    {
-                        ++p;
-                        ++col;
-                    }
-                    break;
-    
+                    break;    
                 default:
-                    if ( encoding == TIXML_ENCODING_UTF8 )
-                    {
-                        // Eat the 1 to 4 byte utf8 character.
-                        int step = TiXmlBase::utf8ByteTable[*((unsigned char*)p)];
-                        if ( step == 0 )
-                            step = 1;       // Error case from bad encoding, but handle gracefully.
-                        p += step;
-    
-                        // Just advance one column, of course.
-                        ++col;
-                    }
-                    else
-                    {
-                        ++p;
-                        ++col;
-                    }
+                    ++col;
                     break;
-            }
+            }   
         }
         cursor.row = row;
         cursor.col = col;
@@ -3339,13 +3097,15 @@ public:
         assert( cursor.col >= -1 );
         stamp = p;
         assert( stamp );
+        +/
     }
 
-    const TiXmlCursor& Cursor() { return cursor; }
+    TiXmlCursor Cursor() { return cursor; }
+    char[] CursorString(){ return std.string.format("%d, %d", cursor.row, cursor.col); }
 
   private:
     // Only used by the document!
-    TiXmlParsingData( char[] start, int _tabsize, int row, int col )
+    this( char[] start, int _tabsize, int row, int col )
     {
         assert( start );
         stamp = start;
@@ -3357,4 +3117,18 @@ public:
     TiXmlCursor     cursor;
     char[] stamp;
     int             tabsize;
+}
+
+import std.stdio;
+
+int main()
+{
+    TiXmlDocument doc = new TiXmlDocument;
+    doc.LoadFile("test01.xml");
+    writefln("ddir");
+
+    doc.SaveFile("output.xml");
+
+    writefln("%s %s", doc.ErrorId, doc.ErrorDesc());
+    return 0;
 }
