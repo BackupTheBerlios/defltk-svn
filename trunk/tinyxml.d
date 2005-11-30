@@ -29,18 +29,9 @@ module tinyxml;
 
 import std.string, std.file, std.utf, std.stdio;
 
-// debug = TI_DEBUG
 debug(DEBUG_PARSE)
     alias std.stdio.writefln TIXML_LOG;
 
-/+
-#if defined( DEBUG ) && defined( _MSC_VER )
-#include <windows.h>
-#define TIXML_LOG OutputDebugString
-#else
-#define TIXML_LOG printf
-#endif
-+/
 alias char[]        string;
 
 //class TiXmlDocument;
@@ -51,6 +42,9 @@ alias char[]        string;
 //class TiXmlText;
 //class TiXmlDeclaration;
 //class TiXmlParsingData;
+
+//class TiXmlReader;
+//class TiXmlWriter;
 
 const int TIXML_VERSION = 0x242;
 
@@ -63,10 +57,6 @@ const int TIXML_VERSION = 0x242;
 //              ef bb bf (Microsoft "lead bytes")
 //              ef bf be
 //              ef bf bf 
-
-const char TIXML_UTF_LEAD_0 = 0xefU;
-const char TIXML_UTF_LEAD_1 = 0xbbU;
-const char TIXML_UTF_LEAD_2 = 0xbfU;
 
 /*  Internal structure for tracking location of items 
     in the XML file.
@@ -103,11 +93,6 @@ enum TiXmlEncoding
 
 const TiXmlEncoding TIXML_DEFAULT_ENCODING = TiXmlEncoding.UNKNOWN;
 
-bool IsWhiteSpace(char c)
-{
-    return std.string.iswhite(c) == 0;
-}
-
 /** TiXmlBase is a base class for every class in TinyXml.
     It does little except to establish that TinyXml classes
     can be printed and provide some utility functions.
@@ -133,14 +118,7 @@ bool IsWhiteSpace(char c)
 abstract class TiXmlBase
 {
 public:
-    this(){ userData = null; }  
-
-    /** All TinyXml classes can print themselves to a filestream.
-        This is a formatted print, and will insert tabs and newlines.
-        
-        (For an unformatted stream, use the << operator.)
-    */
-    abstract char[] toString( int depth );
+    this(){ userData = null; }   
 
     /** Return the position, in the original source file, of this node or attribute.
         The row and column are 1-based. (That is the first row and first column is
@@ -169,7 +147,9 @@ public:
     void  SetUserData( void* user )         { userData = user; }
     void* GetUserData()                     { return userData; }
 
-    abstract char[] Parse(char[] p, TiXmlParsingData data, TiXmlEncoding encoding /*= TiXmlEncoding.UNKNOWN */ );
+    //abstract char[] Parse(char[] p, TiXmlParsingData data, TiXmlEncoding encoding /*= TiXmlEncoding.UNKNOWN */ );
+    package abstract bool readFrom(TiXmlReader reader);
+    package abstract bool writeTo(TiXmlWriter writer);
 
     enum
     {
@@ -204,47 +184,21 @@ private:
     struct Entity
     {
         char[] str;
-        int             strLength;
-        char            chr;
-    }
-    enum
-    {
-        NUM_ENTITY = 5,
-        MAX_ENTITY_LENGTH = 6
-
+        //int             strLength;
+        //alias str.length strLength;
+        dchar            chr;
     }
     
-    const Entity amp = { "&amp;",  5, '&' };
-    const Entity lt = { "&lt;",   4, '<' };
-    const Entity gt = { "&gt;",   4, '>' };
-    const Entity quot = { "&quot;", 6, '\"' };
-    const Entity apos = { "&apos;", 6, '\'' };
+    const Entity amp = { "&amp;",  '&' };
+    const Entity lt = { "&lt;",   '<' };
+    const Entity gt = { "&gt;",   '>' };
+    const Entity quot = { "&quot;", '\"' };
+    const Entity apos = { "&apos;", '\'' };
     
     static Entity entity[] = [ amp, lt, gt, quot, apos ];
-    static bool condenseWhiteSpace = true;
+    static char[] errorString[ TIXML_ERROR_STRING_COUNT ];
     
 public:    
-    // Table that returs, for a given lead byte, the total number of bytes
-    // in the UTF-8 sequence.
-    static int utf8ByteTable[256] = [
-    //  0   1   2   3   4   5   6   7   8   9   a   b   c   d   e   f
-        1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  // 0x00
-        1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  // 0x10
-        1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  // 0x20
-        1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  // 0x30
-        1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  // 0x40
-        1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  // 0x50
-        1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  // 0x60
-        1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  // 0x70 End of ASCII range
-        1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  // 0x80 0x80 to 0xc1 invalid
-        1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  // 0x90 
-        1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  // 0xa0 
-        1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  // 0xb0 
-        1,  1,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  // 0xc0 0xc2 to 0xdf 2 byte
-        2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  // 0xd0
-        3,  3,  3,  3,  3,  3,  3,  3,  3,  3,  3,  3,  3,  3,  3,  3,  // 0xe0 0xe0 to 0xef 3 byte
-        4,  4,  4,  4,  4,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1   // 0xf0 0xf0 to 0xf4 4 byte, 0xf5 and higher invalid
-    ];
 
     /** The world does not agree on whether white space should be kept or
         not. In order to make everyone happy, these global, static functions
@@ -255,413 +209,7 @@ public:
     static void SetCondenseWhiteSpace( bool condense ){ condenseWhiteSpace = condense; }
 
     /// Return the current white space setting.
-    static bool IsWhiteSpaceCondensed() { return condenseWhiteSpace; }  
-    
-    
-    
-protected:
-    static bool isUTF8LeadingBytes(char[] p)
-    {
-        const char[] ms =  "\xef\xbb\xbf"; // the stupid Microsoft UTF-8 Byte order marks
-        const char[] big = "\xef\xbf\xbe"; // 
-        const char[] lt =  "\xef\xbf\xbf"; //
-        
-        return (p == ms || p == big || p == lt);            
-    }
-    
-    static char[] SkipWhiteSpace(char[] p, TiXmlEncoding encoding )
-    {
-        if ( p is null || p.length == 0 )
-        {
-            return null;
-        }
-        
-        if ( encoding == TiXmlEncoding.UTF8 )
-        {
-            if(isUTF8LeadingBytes(p[0..3]))
-            {
-                p = p[3 .. $];
-            }
-        }
-
-        foreach(int i, dchar c; p)
-        {
-            if(!std.string.isspace(c))
-            {
-                return p[i..$];
-            }               
-        }
-    
-        return null;
-    }
-
-    /*  Reads an XML name into the string provided. Returns
-        a pointer just past the last character of the name,
-        or 0 if the function has an error.
-    */
-    static char[] ReadName(char[] p, out char[] name, TiXmlEncoding encoding)
-    in
-    {
-        assert( p !is null);
-    }
-    body
-    {
-        // Names start with letters or underscores.
-        // Of course, in unicode, tinyxml has no idea what a letter *is*. The
-        // algorithm is generous.
-        //
-        // After that, they can be letters, underscores, numbers,
-        // hyphens, or colons. (Colons are valid ony for namespaces,
-        // but tinyxml can't tell namespaces from names.)
-        if (p.length > 0 && ( IsAlpha( p[0], encoding) || p[0] == '_' ))
-        {
-            foreach(int i, dchar c; p[0..$])
-            {
-                if(!(IsAlphaNum(c , encoding) 
-                             || c == '_'
-                             || c == '-'
-                             || c == '.'
-                             || c == ':'))
-                {
-                    name = p[0..i];                    
-                    return p[i..$];
-                }               
-            }
-            name = "";
-            return null;
-        }
-        name = null;
-        return null;
-    }
-
-    static int findTag(char[] p, char[] tag, bool ignoreCase)
-    {
-        if(ignoreCase)
-            return std.string.ifind(p, tag);
-        else
-            return std.string.find(p, tag);
-
-    }
-
-    /*  Reads text. Returns a pointer past the given end tag.
-        Wickedly complex options, but it keeps the (sensitive) code in one place.
-    */
-    static char[] ReadText(char[] p,                // where to start
-                            out char[] text,            // the string read
-                            bool ignoreWhiteSpace,      // whether to keep the white space
-                            char[] endTag,          // what ends this text
-                            bool ignoreCase,            // whether to ignore case in the end tag
-                            TiXmlEncoding encoding )    // the current encoding
-    {
-        int idx = findTag(p, endTag, ignoreCase);
-        if(idx == -1)
-        {
-            return null;
-        }
-
-        char[] theText = p[0 .. idx];
-
-        if (!ignoreWhiteSpace           // certain tags always keep whitespace
-             || !condenseWhiteSpace )   // if true, whitespace is always kept
-        {
-            // Keep all the white space.            
-            while(theText.length > 0)
-            {
-                int len;
-                char cArr[];
-                theText = GetChar( p, cArr, len, encoding );
-                text ~= cArr;
-            }
-        }
-        else
-        {
-            bool whitespace = false;
-    
-            // Remove leading white space:
-            theText = SkipWhiteSpace( theText, encoding );
-
-            while (theText.length > 0)
-            {
-                if ( theText[0] == '\r' || theText[0] == '\n' )
-                {
-                    whitespace = true;
-                    theText = theText[1 .. $];
-                }
-                else if ( IsWhiteSpace( theText[0] ) )
-                {
-                    whitespace = true;
-                    theText = theText[1 .. $];
-                }
-                else
-                {
-                    // If we've found whitespace, add it before the
-                    // new character. Any whitespace just becomes a space.
-                    if ( whitespace )
-                    {
-                        text ~= ' ';
-                        whitespace = false;
-                    }
-
-                    int len;
-                    char cArr[];
-                    theText = GetChar( p, cArr, len, encoding );
-                    text ~= cArr;
-                }
-            }
-        }
-
-        return p[idx + endTag.length .. $];
-    }                               
-
-    // If an entity has been found, transform it into a character.
-    static char[] GetEntity( char[] p, out char[] value, out int length, TiXmlEncoding encoding )
-    {
-        // Presume an entity, and pull it out.
-    
-        if ( p.length > 2 && p[1] == '#') //&#number;
-        {
-            int ucs = 0;
-    
-            if ( p[2] == 'x' )
-            {
-                // Hexadecimal. &#xA9;
-                if ( p.length < 4 ) return null;
-
-                int end = find(p, ';');
-                if ( end == -1 )  return null;
-                char[] number = p[3..end];
-
-                foreach(char c; number)
-                {
-                    int value = std.string.ifind(std.string.hexdigits, c);
-                    if(value == -1) return null;
-                    ucs += value;
-                    ucs << 4; //ucs * 16;
-                }
-                p = p[end + 1..$]; //skip ';'
-            }
-            else
-            {
-                // Decimal.
-                if ( p.length < 3 ) return null;
-
-                int end = find(p, ';');
-                if ( end == -1 )  return null;
-
-                char[] number = p[2..end];
-    
-                foreach(char c; number)
-                {
-                    int value = std.string.ifind(std.string.digits, c);
-                    if(value == -1) return null;
-                    ucs += value;
-                    ucs *= 10;
-                }
-                p = p[end + 1..$]; //skip ';'
-            }
-
-            if ( encoding == TiXmlEncoding.UTF8 )
-            {
-                // convert the UCS to UTF-8
-                dchar[] a;
-                a ~= ucs;
-                value = std.utf.toUTF8(a);
-            }
-            else
-            {
-                value.length = 1;
-                value[0] = cast(char)ucs;                
-            }
-            return p;
-        }
-    
-        // Now try to match it.
-        foreach(Entity e; entity)
-        {
-            if ( e.str == p[0 .. e.strLength])
-            {
-                value.length = 1;
-                value[0] = e.chr;                
-                return p[e.strLength .. $];
-            }
-        }
-        
-        // So it wasn't an entity, its unrecognized, or something like that.
-        value.length = 1;
-        value[0] = p[0];    // Don't put back the last one, since we return it!
-        return p[1 .. 0];
-    }
-
-    // Get a character, while interpreting entities.
-    // The length can be from 0 to 4 bytes.
-    static char[] GetChar( char[] p, out char[] _value, out int length, TiXmlEncoding encoding )
-    in
-    {
-        assert( p !is null);
-    }
-    body
-    {        
-        if ( encoding == TiXmlEncoding.UTF8 )
-        {
-            length = utf8ByteTable[ cast(int)p[0] ];
-            assert( length >= 0 && length < 5 );
-        }
-        else
-        {
-            length = 1;
-        }
-
-        if ( length == 1 && p[0] == '&') //&0x...;
-        {
-            return GetEntity( p, _value, length, encoding);
-        }
-        
-        if ( length > 0 )
-        {              
-            _value = p[0..length];
-            return p[length .. $];
-        }
-        else
-        {
-            // Not valid text.
-            return null;
-        }
-    }
-
-    // Note this should not contian the '<', '>', etc, or they will be transformed into entities!
-    static void PutString( char[] from, out char[] to )
-    {
-        foreach(int i, char c; from)
-        {
-            if (c == '&' && i < (from.length - 2) && from[i + 1] == '#' && from[i+2] == 'x')
-            {
-                // Hexadecimal character reference.
-                // Pass through unchanged.
-                // &#xA9;   -- copyright symbol, for example.
-                //
-                // The -1 is a bug fix from Rob Laveaux. It keeps
-                // an overflow from happening if there is no ';'.
-                // There are actually 2 ways to exit this loop -
-                // while fails (error case) and break (semicolon found).
-                // However, there is no mechanism (currently) for
-                // this function to return an error.
-            }
-            else if ( c == '&' )
-            {
-                to ~= entity[0].str;
-            }
-            else if ( c == '<' )
-            {
-                to ~= entity[1].str;
-            }
-            else if ( c == '>' )
-            {
-                to ~= entity[2].str;
-            }
-            else if ( c == '\"' )
-            {
-                to ~= entity[3].str;
-            }
-            else if ( c == '\'' )
-            {
-                to ~= entity[4].str;
-            }
-            else if ( c < 32 )
-            {
-                char[] symbol = "&#x00";
-                symbol[4] = std.string.hexdigits[(c & 0xff) >> 4];
-                symbol[5] = std.string.hexdigits[c & 0xf];
-
-                to ~= symbol;
-            }
-            else
-            {
-                to ~= c;
-            }
-        }
-    }
-
-    // Return true if the next characters in the stream are any of the endTag sequences.
-    // Ignore case only works for english, and should only be relied on when comparing
-    // to English words: StringEqual( p, "version", true ) is fine.
-    static bool StringEqual(char[] p, char[] endTag, bool ignoreCase, TiXmlEncoding encoding )
-    in
-    {
-        assert(p !is null && endTag !is null && p.length > 0 && endTag.length > 0);
-    }
-    body
-    {
-        debug(DEBUG_PARSE) writefln("%s == %s", p, endTag);
-        if(p.length < endTag.length)
-            return false;
-    
-        if ( ignoreCase )
-        {
-            return 0 == std.string.icmp(p[0 .. endTag.length], endTag);
-        }
-        else
-        {
-            return 0 == std.string.cmp(p[0 .. endTag.length], endTag);          
-        }       
-    }
-
-    static char[] errorString[ TIXML_ERROR_STRING_COUNT ];
-        
-    // None of these methods are reliable for any language except English.
-    // Good for approximation, not great for accuracy.
-    static int IsAlpha( char anyByte, TiXmlEncoding encoding )
-    {
-        // This will only work for low-ascii, everything else is assumed to be a valid
-        // letter. I'm not sure this is the best approach, but it is quite tricky trying
-        // to figure out alhabetical vs. not across encoding. So take a very 
-        // conservative approach.
-    
-    //  if ( encoding == TiXmlEncoding.UTF8 )
-    //  {
-            if ( anyByte < 127 )
-                return std.string.isalpha(anyByte);
-            else
-                return 1;   // What else to do? The unicode set is huge...get the english ones right.
-    //  }
-    //  else
-    //  {
-    //      return isalpha( anyByte );
-    //  }
-    }
-
-    static int IsAlphaNum( byte anyByte, TiXmlEncoding encoding )
-    {
-        // This will only work for low-ascii, everything else is assumed to be a valid
-        // letter. I'm not sure this is the best approach, but it is quite tricky trying
-        // to figure out alhabetical vs. not across encoding. So take a very 
-        // conservative approach.
-    
-    //  if ( encoding == TiXmlEncoding.UTF8 )
-    //  {
-            if ( anyByte < 127 )
-                return std.string.isalnum( anyByte );
-            else
-                return 1;   // What else to do? The unicode set is huge...get the english ones right.
-    //  }
-    //  else
-    //  {
-    //      return isalnum( anyByte );
-    //  }
-    }
-    /+
-    static int ToLower( int v, TiXmlEncoding    encoding )
-    {
-        if ( encoding == TiXmlEncoding.UTF8 )
-        {
-            if ( v < 128 ) return tolower( v );
-            return v;
-        }
-        else
-        {
-            return tolower( v );
-        }
-    }
-    +/
+    static bool IsWhiteSpaceCondensed() { return condenseWhiteSpace; }      
 }
 
 
@@ -689,7 +237,7 @@ public:
     }
 
     ~this()
-    {
+    {        
         TiXmlNode node = firstChild;
         TiXmlNode temp = null;
     
@@ -1063,7 +611,7 @@ public:
     }
 
     /// Returns true if this node has no children.
-    bool NoChildren()                      { return firstChild is null; }
+    bool NoChildren(){ return firstChild is null; }
 
 
     ///< Cast to a more defined type. Will return null not of the requested type.
@@ -1100,95 +648,12 @@ protected:
     }
     +/
 
-    // Figure out what is at *p, and parse it. Returns null if it is not an xml node.
-    TiXmlNode Identify(char[] p, TiXmlEncoding encoding )
-    {
-        TiXmlNode returnNode = null;
-    
-        p = SkipWhiteSpace( p, encoding );
-        if( p is null || p.length == 0 || p[0] != '<' )
-        {
-            return null;
-        }
-    
-        TiXmlDocument doc = GetDocument();        
-    
-        // What is this thing? 
-        // - Elements start with a letter or underscore, but xml is reserved.
-        // - Comments: <!--
-        // - Decleration: <?xml
-        // - Everthing else is unknown to tinyxml.
-        //
-    
-        const char[] xmlHeader = "<?xml";
-        const char[] commentHeader = "<!--";
-        const char[] dtdHeader = "<!";
-        const char[] cdataHeader = "<![CDATA[";
-    
-        if ( StringEqual( p, xmlHeader, true, encoding ) )
-        {
-            debug(DEBUG_PARSE)
-                TIXML_LOG( "XML parsing Declaration\n" );
-
-            returnNode = new TiXmlDeclaration();
-        }
-        else if ( StringEqual( p, commentHeader, false, encoding ) )
-        {
-            debug(DEBUG_PARSE)
-                TIXML_LOG( "XML parsing Comment\n" );
-
-            returnNode = new TiXmlComment();
-        }
-        else if ( StringEqual( p, cdataHeader, false, encoding ) )
-        {
-            debug(DEBUG_PARSE)
-                TIXML_LOG( "XML parsing CDATA\n" );
-
-            TiXmlText text = new TiXmlText( "" );
-            text.SetCDATA( true );
-            returnNode = text;
-        }
-        else if ( StringEqual( p, dtdHeader, false, encoding ) )
-        {
-            debug(DEBUG_PARSE)
-                TIXML_LOG( "XML parsing Unknown(DTD)\n" );
-
-            returnNode = new TiXmlUnknown();
-        }
-        else if ( IsAlpha( p[1], encoding ) || p[1] == '_' )
-        {
-            debug(DEBUG_PARSE)
-                TIXML_LOG( "XML parsing Element\n" );
-
-            returnNode = new TiXmlElement( "" );
-        }
-        else
-        {
-            debug(DEBUG_PARSE)
-                TIXML_LOG( "XML parsing Unknown(...)\n" );
-
-            returnNode = new TiXmlUnknown();
-        }
-    
-        if ( returnNode !is null)
-        {
-            // Set the parent, so it can report errors
-            returnNode.parent = this;
-        }
-        else
-        {
-            if ( doc !is null )
-                doc.SetError( TIXML_ERROR_OUT_OF_MEMORY, null, null, TiXmlEncoding.UNKNOWN );
-        }
-        return returnNode;
-    }
-
     TiXmlNode      parent;
     NodeType       type;
 
     TiXmlNode      firstChild, lastChild;
 
-    char[]       value;
+    char[]         value;
 
     TiXmlNode      prev, next;
 }
@@ -1230,31 +695,7 @@ public:
     double DoubleValue()                 ///< Return the value of this attribute, converted to a double.
     {
         return std.string.atof (value);
-    }
-    /+
-    /** QueryIntValue examines the value string. It is an alternative to the
-        IntValue() method with richer error checking.
-        If the value is an integer, it is stored in 'value' and 
-        the call returns TIXML_SUCCESS. If it is not
-        an integer, it returns TIXML_WRONG_TYPE.
-
-        A specialized but useful call. Note that for success it returns 0,
-        which is the opposite of almost all other TinyXml calls.
-    */
-    int QueryIntValue( out int _value )
-    {
-        if ( sscanf( value.c_str(), "%d", ival ) == 1 )
-            return TIXML_SUCCESS;
-        return TIXML_WRONG_TYPE;
-    }
-    /// QueryDoubleValue examines the value string. See QueryIntValue().
-    int QueryDoubleValue( double* _value )
-    {
-        if ( sscanf( value.c_str(), "%lf", dval ) == 1 )
-            return TIXML_SUCCESS;
-        return TIXML_WRONG_TYPE;
-    }
-    +/
+    }   
 
     void Name( char[] _name )   { name = _name; }               ///< Set the name of this attribute.
     void Value( char[] _value ) { value = _value; }             ///< Set the value.
@@ -1297,84 +738,15 @@ public:
         return std.string.cmp(name, rhs.name);
     }
     
-    /*  Attribute parsing starts: first letter of the name
-                         returns: the next char after the value end quote
-    */
-    char[] Parse( char[] p, TiXmlParsingData data, TiXmlEncoding encoding )
+    
+    bool readFrom(TiXmlReader reader)
     {
-        p = SkipWhiteSpace( p, encoding );
-        if ( p is null || p.length == 0 ) return null;
-    
-        int tabsize = 4;
-        if ( document !is null)
-            tabsize = document.TabSize();
-    
-        if ( data !is null )
-        {
-            data.Stamp( p, encoding );
-            location = data.Cursor();
-        }
-        // Read the name, the '=' and the value.
-        char[] pErr = p;
-        p = ReadName( p, name, encoding );
-        if ( p is null)
-        {
-            if ( document ) document.SetError( TIXML_ERROR_READING_ATTRIBUTES, pErr, data, encoding );
-            return null;
-        }
-        p = SkipWhiteSpace( p, encoding );
-        if ( p is null || p.length == 0 || p[0] != '=' )
-        {
-            if ( document ) document.SetError( TIXML_ERROR_READING_ATTRIBUTES, p, data, encoding );
-            return null;
-        }
-    
-        p = p[1 .. $];    // skip '='
-        p = SkipWhiteSpace( p, encoding );
-        if ( p is null || p.length == 0)
-        {
-            if ( document ) document.SetError( TIXML_ERROR_READING_ATTRIBUTES, p, data, encoding );
-            return null;
-        }
-        
-        char[] end;
-    
-        if ( p[0] == '\'' )
-        {
-            end = "\'";
-            p = ReadText( p[1 .. $], value, false, end, false, encoding );
-        }
-        else if ( *p == '"' )
-        {
-            end = "\"";
-            p = ReadText( p[1 .. $], value, false, end, false, encoding );
-        }
-        else
-        {
-            // All attribute values should be in single or double quotes.
-            // But this is such a common error that the parser will try
-            // its best, even without them.
-            value = "";
-            const char[] saparator = std.string.whitespace ~ "/>";
-
-            foreach(char c; p)
-            {                
-                if( -1 == std.string.find(saparator, c))
-                {
-                    value ~= c;
-                }
-            }
-        }
-        return p;
+        return reader.readAttribute(this);
     }
-
-    // Prints this Attribute to a FILE stream.
-    char[] toString(int depth )
+    
+    bool writeTo(TiXmlWriter writer)
     {
-        if (std.string.find (value, '\"') == -1)
-            return name ~ "=\"" ~ value ~ "\"";
-        else
-            return name ~ "=\'" ~ value ~ "\'";
+        return writer.readAttribute(this);
     }
 
     // [internal use]
@@ -1406,21 +778,17 @@ class TiXmlAttributeSet
 public:
     this()
     {
-        sentinel = null;
+        sentinel = new TiXmlAttribute;
+        sentinel.next = sentinel;
+        sentinel.prev = sentinel;
     }
     ~this()
     {
+        
     }
 
     void Add( TiXmlAttribute addMe )
     {
-        if(sentinel is null)
-        {
-            sentinel = addMe;
-            sentinel.next = sentinel;
-            sentinel.prev = sentinel;
-        }
-
         assert( !Find( addMe.Name() ) );   // Shouldn't be multiply adding to the set.
     
         addMe.next = sentinel;
@@ -1430,7 +798,7 @@ public:
         sentinel.prev      = addMe;
     }
     void Remove( TiXmlAttribute removeMe )
-    {
+    {        
         TiXmlAttribute node;
     
         for( node = sentinel.next; node !is sentinel; node = node.next )
@@ -1452,7 +820,7 @@ public:
     TiXmlAttribute Last()  { return ( sentinel.prev is sentinel ) ? null : sentinel.prev; }
 
     TiXmlAttribute Find( char[]  name  )
-    {
+    {               
         TiXmlAttribute node;
     
         for( node = sentinel.next; node !is sentinel; node = node.next )
@@ -1538,45 +906,6 @@ public:
         }
         return null;
     }
-
-    /+
-    /** QueryIntAttribute examines the attribute - it is an alternative to the
-        Attribute() method with richer error checking.
-        If the attribute is an integer, it is stored in 'value' and 
-        the call returns TIXML_SUCCESS. If it is not
-        an integer, it returns TIXML_WRONG_TYPE. If the attribute
-        does not exist, then TIXML_NO_ATTRIBUTE is returned.
-    */  
-    int QueryIntAttribute( char[] name, int* _value )
-    {
-        const TiXmlAttribute* node = attributeSet.Find( name );
-        if ( !node )
-            return TIXML_NO_ATTRIBUTE;
-    
-        return node.QueryIntValue( ival );
-    }
-    
-    /// QueryDoubleAttribute examines the attribute - see QueryIntAttribute().
-    int QueryDoubleAttribute( char[] name, double* _value )
-    {
-        const TiXmlAttribute* node = attributeSet.Find( name );
-        if ( !node )
-            return TIXML_NO_ATTRIBUTE;
-    
-        return node.QueryDoubleValue( dval );
-    }
-    
-    /// QueryFloatAttribute examines the attribute - see QueryIntAttribute().
-    int QueryFloatAttribute( char[] name, float* _value )
-    {
-        double d;
-        int result = QueryDoubleAttribute( name, &d );
-        if ( result == TIXML_SUCCESS ) {
-            *_value = (float)d;
-        }
-        return result;
-    }
-    +/
 
     /** Sets an attribute of name to a given value. The attribute
         will be created if it does not exist, or changed if it does.
@@ -1691,184 +1020,7 @@ public:
         CopyTo( clone );
         return clone;
     }
-    +/
-    
-    // Print the Element to a FILE stream.
-    char[] toString( int depth )
-    {
-        char[] str = std.string.repeat(" ", depth * 4);
-        str ~= "<" ~ value;
-   
-        TiXmlAttribute attrib;
-        for ( attrib = attributeSet.First(); attrib !is null; attrib = attrib.Next() )
-        {
-            str ~= " " ~ attrib.toString(depth);
-        }
-    
-        // There are 3 different formatting approaches:
-        // 1) An element without children is printed as a <foo /> node
-        // 2) An element with only a text child is printed as <foo> text </foo>
-        // 3) An element with children is printed on multiple lines.
-        TiXmlNode node;
-        if ( firstChild is null)
-        {
-            str ~= " />";
-        }
-        else if ( firstChild == lastChild && firstChild.ToText() !is null )
-        {
-            str ~= ">";
-            str ~= firstChild.toString(depth + 1);
-            str ~= "</" ~ value ~ ">";
-        }
-        else
-        {
-            str ~= ">";
-    
-            for ( node = firstChild; node !is null; node=node.NextSibling() )
-            {
-                if ( node.ToText() !is null)
-                {
-                    str ~= "\n";
-                }
-                str ~= node.toString(depth + 1);
-            }
-            str ~= "\n";
-            str ~= std.string.repeat(" ", depth * 4);
-            str ~= "</" ~ value ~ ">";
-        }
-    }
-
-    /*  Attribtue parsing starts: next char past '<'
-                         returns: next char past '>'
-    */
-    char[] Parse( char[] p, TiXmlParsingData data, TiXmlEncoding encoding )
-    {
-        TiXmlDocument document = GetDocument();
-
-        p = SkipWhiteSpace( p, encoding );
-
-        if ( p is null || p.length == 0 )
-        {
-            if ( document ) document.SetError( TIXML_ERROR_PARSING_ELEMENT, null, null, encoding );
-            return null;
-        }
-    
-        if ( data !is null )
-        {
-            data.Stamp( p, encoding );
-            location = data.Cursor();
-        }
-    
-        if ( p[0] != '<' )
-        {
-            if ( document ) document.SetError( TIXML_ERROR_PARSING_ELEMENT, p, data, encoding );
-            return null;
-        }
-    
-        p = SkipWhiteSpace( p[1 .. $], encoding );
-
-        if ( p is null || p.length == 0 )
-        {
-            if ( document ) document.SetError( TIXML_ERROR_PARSING_ELEMENT, null, null, encoding );
-            return null;
-        }
-
-        // Read the name.
-        char[] pErr = p;
-    
-            
-        p = ReadName( p, value, encoding );
-        if ( p is null || p.length == 0 )
-        {
-            if ( document ) document.SetError( TIXML_ERROR_FAILED_TO_READ_ELEMENT_NAME, pErr, data, encoding );
-            return null;
-        }
-
-        char[] endTag = "</" ~ value ~ ">";
-          
-        // Check for and read attributes. Also look for an empty
-        // tag or an end tag.
-        while ( p.length > 0 )
-        {
-            pErr = p;
-            p = SkipWhiteSpace( p, encoding );
-            if ( p is null || p.length == 0 )
-            {
-                if ( document )
-                    document.SetError( TIXML_ERROR_READING_ATTRIBUTES, pErr, data, encoding );
-                return null;
-            }
-
-            if ( p[0] == '/' )
-            {                
-                // Empty tag.
-                if ( p[1] != '>' )
-                {
-                    if ( document )
-                        document.SetError( TIXML_ERROR_PARSING_EMPTY, p, data, encoding );     
-                    return null;
-                }
- 
-                return p[2..$]; //skip "/>"
-            }
-            else if ( p[0] == '>' )
-            {
-                // Done with attributes (if there were any.)
-                // Read the value -- which can include other
-                // elements -- read the end tag, and return.                
-                p = ReadValue( p[1 .. $], data, encoding );     // Note this is an Element method, and will set the error if one happens.
-                if ( p is null || p.length == 0 )
-                    return null;
-    
-                // We should find the end tag now
-                if ( StringEqual( p, endTag, false, encoding ) )
-                {
-                    return p[endTag.length .. $];
-                }
-                else
-                {
-                    if ( document )
-                        document.SetError( TIXML_ERROR_READING_END_TAG, p, data, encoding );
-                    return null;
-                }
-            }
-            else
-            {
-                // Try to read an attribute:
-                TiXmlAttribute attrib = new TiXmlAttribute();
-                if ( attrib !is null)
-                {
-                    if ( document )
-                        document.SetError( TIXML_ERROR_OUT_OF_MEMORY, pErr, data, encoding );
-                    return null;
-                }
-    
-                attrib.Document( document );
-                char[] pErr = p;
-                p = attrib.Parse( p, data, encoding );
-    
-                if ( p is null || p.length == 0 )
-                {
-                    if ( document )
-                        document.SetError( TIXML_ERROR_PARSING_ELEMENT, pErr, data, encoding );
-                    delete attrib;
-                    return null;
-                }
-   
-                // Handle the strange case of double attributes:
-                TiXmlAttribute node = attributeSet.Find( attrib.Name() );
-                if ( node is null )
-                {
-                    node.Value( attrib.Value() );
-                    delete attrib;
-                    return null;
-                }
-    
-                attributeSet.Add( attrib );
-            }
-        }
-        return p;
-    }
+    +/      
 
 protected:
     /+
@@ -1905,84 +1057,6 @@ protected:
         }
     }
     
-    /*  [internal use]
-        Reads the "value" of the element -- another element, or text.
-        This should terminate with the current end tag.
-    */
-    char[] ReadValue( char[] p, TiXmlParsingData prevData, TiXmlEncoding encoding )
-    {
-        TiXmlDocument document = GetDocument();
-    
-        // Read in text and elements in any order.
-        char[] pWithWhiteSpace = p;
-        p = SkipWhiteSpace( p, encoding );
-    
-        while ( p.length > 0 )
-        {
-            if ( p[0] != '<' )
-            {
-                // Take what we have, make a text element.
-                TiXmlText textNode = new TiXmlText( "" );
-    
-                if ( textNode is null )
-                {
-                    if ( document )
-                        document.SetError( TIXML_ERROR_OUT_OF_MEMORY, null, null, encoding );
-                    return null;
-                }
-    
-                //if ( TiXmlBase.IsWhiteSpaceCondensed() )
-                {
-                    p = textNode.Parse( p, prevData, encoding );
-                }
-                //else
-                //{
-                    // Special case: we want to keep the white space
-                    // so that leading spaces aren't removed.
-                //    p = textNode.Parse( pWithWhiteSpace, data, encoding );
-                //}
-    
-                if ( !textNode.Blank() )
-                    LinkEndChild( textNode );
-                else
-                    delete textNode;
-            } 
-            else 
-            {
-                // We hit a '<'
-                // Have we hit a new element or an end tag? This could also be
-                // a TiXmlText in the "CDATA" style.
-                if ( StringEqual( p, "</", false, encoding ) )
-                {
-                    return p;
-                }
-                else
-                {
-                    TiXmlNode node = Identify( p, encoding );
-                    if ( node )
-                    {
-                        p = node.Parse( p, prevData, encoding );
-                        LinkEndChild( node );
-                    }               
-                    else
-                    {
-                        return null;
-                    }
-                }
-            }
-            pWithWhiteSpace = p;
-            p = SkipWhiteSpace( p, encoding );
-        }
-    
-        if ( p is null )
-        {
-            if ( document ) 
-                document.SetError( TIXML_ERROR_READING_ELEMENT_VALUE, null, null, encoding );
-        }   
-        return p;
-    }
-
-
 private:
 
     TiXmlAttributeSet attributeSet;
@@ -2013,38 +1087,7 @@ public:
         return clone;
     }
     +/
-    /// Write this Comment to a FILE stream.
-    char[] toString( int depth )
-    {
-        return std.string.repeat(" ", depth * 4) ~ "<!--" ~ value ~ "-->";
-    }
 
-    /*  Attribtue parsing starts: at the ! of the !--
-                         returns: next char past '>'
-    */
-    char[] Parse( char[] p, TiXmlParsingData data, TiXmlEncoding encoding )
-    {
-        TiXmlDocument document = GetDocument();
-        value = "";
-    
-        p = SkipWhiteSpace( p, encoding );
-    
-        if ( data is null)
-        {
-            data.Stamp( p, encoding );
-            location = data.Cursor();
-        }
-        char[] startTag = "<!--";
-        char[] endTag   = "-->";
-    
-        if ( !StringEqual( p, startTag, false, encoding ) )
-        {
-            document.SetError( TIXML_ERROR_PARSING_COMMENT, p, data, encoding );
-            return null;
-        }
-
-        return ReadText( p[startTag.length .. $], value, false, endTag, false, encoding );
-    }
 
 protected:
     /+
@@ -2076,79 +1119,10 @@ public:
         cdata = false;
     }   
     
-    /// Write this text object to a FILE stream.
-    char[] toString( int depth )
-    {
-        if ( cdata )
-        {
-            return "\n" ~ std.string.repeat(" ", depth * 4) ~ "<![CDATA[" ~ value ~ "]]>\n";
-        }
-        else
-        {
-            return value;
-        }
-    }
-
     /// Queries whether this represents text using a CDATA section.
     bool CDATA()                    { return cdata; }
     /// Turns on or off a CDATA representation of text.
     void SetCDATA( bool _cdata )    { cdata = _cdata; }
-
-    char[] Parse( char[] p, TiXmlParsingData data, TiXmlEncoding encoding )
-    {       
-        value = "";
-        TiXmlDocument document = GetDocument();
-    
-        if ( data !is null)
-        {
-            data.Stamp( p, encoding );
-            location = data.Cursor();
-        }
-    
-        char[] startTag = "<![CDATA[";
-        char[] endTag   = "]]>";
-    
-        if ( cdata || StringEqual( p, startTag, false, encoding ) )
-        {
-            cdata = true;
-    
-            if ( !StringEqual( p, startTag, false, encoding ) )
-            {
-                document.SetError( TIXML_ERROR_PARSING_CDATA, p, data, encoding );
-                return null;
-            }
-
-            // Keep all the white space, ignore the encoding, etc.
-            int endIndex = std.string.ifind(p[startTag.length .. $], endTag);
-
-            
-            if(endIndex == -1)
-            {
-                return null;
-            }
-            value = p[startTag.length .. endIndex];
-
-            char[] dummy;
-            p = ReadText( p[endIndex .. $], dummy, false, endTag, false, encoding );
-               
-            return p;
-        }
-        else
-        {
-            bool ignoreWhite = true;
-    
-            char[] end = "<";
-            char[] pOld = p;
-            p = ReadText( p, value, ignoreWhite, end, false, encoding );
-            
-            if ( p !is null)
-            {
-                int beforeEndTag = pOld.length - p.length - 1;
-                return pOld[beforeEndTag .. $]; // don't truncate the '<'
-            }
-            return null;
-        }
-    }
 
 
 protected :
@@ -2169,27 +1143,14 @@ protected :
     {
         TiXmlNode.CopyTo( target );
         target.cdata = cdata;
-    }
-
-
-    virtual void StreamOut ( TIXML_OSTREAM * out )
-    {
-        if ( cdata )
-        {
-            (*stream) << "<![CDATA[" << value << "]]>";
-        }
-        else
-        {
-            PutString( value, stream );
-        }
-    }
+    }   
     +/
 
     bool Blank() // returns true if all white space and new lines
     {
         foreach(char c; value)
         {
-            if( !IsWhiteSpace(c))
+            if( !std.string.iswhite(c))
             {
                 return false;
             }
@@ -2208,7 +1169,7 @@ private:
         <?xml version="1.0" standalone="yes"?>
     @endverbatim
 
-    TinyXml will happily read or write files without a declaration,
+    TinyXml will happily wrtie or write files without a declaration,
     however. There are 3 possible attributes to the declaration:
     version, encoding, and standalone.
 
@@ -2257,77 +1218,7 @@ public:
         return clone;
     }
     +/
-    /// Print this declaration to a FILE stream.
-    char[] toString(int depth )
-    {
-        char[] str ="<?xml ";
-        if ( xml_version.length > 0)
-            str ~= "version=\"" ~ xml_version ~ "\" ";
-
-        if ( encoding.length > 0)
-            str ~= "encoding=\"" ~ encoding ~ "\" ";
-        
-        if ( standalone.length > 0)
-            str ~= "standalone=\"" ~ standalone ~ "\" ";
-
-        str ~= "?>";
-        return str;
-    }
-
-    char[] Parse( char[] p, TiXmlParsingData data, TiXmlEncoding _encoding )
-    {
-        p = SkipWhiteSpace( p, _encoding );
-        // Find the beginning, find the end, and look for
-        // the stuff in-between.
-        TiXmlDocument document = GetDocument();
-        if ( p is null || p.length == 0 || !StringEqual( p, "<?xml", true, _encoding ) )
-        {
-            if ( document )
-                document.SetError( TIXML_ERROR_PARSING_DECLARATION, null, null, _encoding );
-            return null;
-        }
-        if ( data !is null)
-        {
-            data.Stamp( p, _encoding );
-            location = data.Cursor();
-        }
-
-        int endxml = std.string.find(p, '>');
-        if(endxml  == -1)
-            return null;
-          
-        char[] declare = p[5 .. endxml];
-        
-        xml_version = "1.0";
-        encoding = "UTF-8";
-        standalone = "yes";
-  
-        auto TiXmlAttribute attrib = new TiXmlAttribute;
-
-        int begin = std.string.find( declare, "version");
-        if ( begin != -1)
-        {
-            attrib.Parse( declare[begin .. $], data, _encoding );     
-            xml_version = attrib.Value();
-        }
-
-        begin = std.string.find( declare, "encoding");
-        if ( begin != -1)
-        {
-            attrib.Parse( declare[begin .. $], data, _encoding );     
-            encoding = attrib.Value();
-        }
-
-        begin = std.string.find( declare, "standalone");
-        if ( begin != -1)
-        {
-            attrib.Parse( declare[begin .. $], data, _encoding );     
-            standalone = attrib.Value();
-        }
-
-        return p[endxml + 1 .. $];
-    }
-
+    
 protected:
     /+
     void CopyTo( TiXmlDeclaration* target )
@@ -2338,32 +1229,7 @@ protected:
         target.encoding = encoding;
         target.standalone = standalone;
     }
-    // used to be public
-    
-    virtual void StreamOut ( TIXML_OSTREAM * out)
-    {
-        (*stream) << "<?xml ";
-    
-        if ( !version.empty() )
-        {
-            (*stream) << "version=\"";
-            PutString( version, stream );
-            (*stream) << "\" ";
-        }
-        if ( !encoding.empty() )
-        {
-            (*stream) << "encoding=\"";
-            PutString( encoding, stream );
-            (*stream ) << "\" ";
-        }
-        if ( !standalone.empty() )
-        {
-            (*stream) << "standalone=\"";
-            PutString( standalone, stream );
-            (*stream) << "\" ";
-        }
-        (*stream) << "?>";
-    }
+    // used to be public    
     +/
 
 private:
@@ -2401,49 +1267,14 @@ public:
         return clone;
     }
     +/
-    /// Print this Unknown to a FILE stream.
-    char[] toString(int depth )
-    {
-        return std.string.repeat(" ", depth * 4) ~ "<" ~ value ~ ">";
-    }
-
-
-    char[] Parse( char[] p, TiXmlParsingData data, TiXmlEncoding encoding )
-    {
-        TiXmlDocument document = GetDocument();
-        p = SkipWhiteSpace( p, encoding );
-    
-        if ( data !is null )
-        {
-            data.Stamp( p, encoding );
-            location = data.Cursor();
-        }
-        if ( p is null || p.length == 0 || p[0] != '<' )
-        {
-            if ( document )
-                document.SetError( TIXML_ERROR_PARSING_UNKNOWN, p, data, encoding );
-            return null;
-        }
-        int endTag = std.string.find(p, '>');
-        if(endTag == -1)
-        {
-            return null;
-        }
-        value = p[1 .. endTag];
-        return p[endTag + 1 .. $];
-    }
+       
 
 protected:
     /+
     void CopyTo( TiXmlUnknown* target )
     {
         TiXmlNode.CopyTo( target );
-    }
-
-    void StreamOut ( TIXML_OSTREAM * out )
-    {
-        (*stream) << "<" << value << ">";       // Don't use entities here! It is unknown.
-    }
+    }    
     +/
 }
 
@@ -2492,26 +1323,11 @@ public:
     /// Load a file using the given filename. Returns true if successful.
     bool LoadFile( char[]  filename, TiXmlEncoding encoding = TIXML_DEFAULT_ENCODING )
     {
-        // Delete the existing data:
-        Clear();
-        location.Clear();
-
-        value = filename;
+        auto reader = new TiXmlReader(filename);
         
-        if ( std.file.exists(value) )
-        {
-            char[] buf = cast(char[])std.file.read(value);                              
-    
-            Parse(buf, null, encoding );
-
-    
-            if (  Error() )
-                return false;
-            else
-                return true;
-        }        
-        SetError( TIXML_ERROR_OPENING_FILE, null, null, TiXmlEncoding.UNKNOWN );
-        return false;
+        return readFrom(reader);
+        
+        
     }
     /// Save a file using the given filename. Returns true if successful.
     bool SaveFile( char[]  filename )
@@ -2525,105 +1341,10 @@ public:
         buf ~= toString(0);
 
         std.file.write(filename, buf);
+        
         return true;
     }
 
-    /** Parse the given null terminated block of xml data. Passing in an encoding to this
-        method (either TiXmlEncoding.LEGACY or TiXmlEncoding.UTF8 will force TinyXml
-        to use that encoding, regardless of what TinyXml might otherwise try to detect.
-    */
-    char[] Parse( char[] p, TiXmlParsingData prevData = null, TiXmlEncoding encoding = TIXML_DEFAULT_ENCODING )
-    {
-        ClearError();
-    
-        // Parse away, at the document level. Since a document
-        // contains nothing but other tags, most of what happens
-        // here is skipping white space.
-        if ( p is null || p.length == 0 )
-        {
-            SetError( TIXML_ERROR_DOCUMENT_EMPTY, null, null, TiXmlEncoding.UNKNOWN );
-            return null;
-        }
-    
-        // Note that, for a document, this needs to come
-        // before the while space skip, so that parsing
-        // starts from the pointer we are given.
-        TiXmlCursor location;
-        if ( prevData !is null )
-        {
-            location.row = prevData.cursor.row;
-            location.col = prevData.cursor.col;
-        }
-        else
-        {
-            location.row = 0;
-            location.col = 0;
-        }
-        TiXmlParsingData data = new TiXmlParsingData( p, TabSize(), location.row, location.col );
-        location = data.Cursor();
-    
-        if ( encoding == TiXmlEncoding.UNKNOWN )
-        {
-            // Check for the Microsoft UTF-8 lead bytes.            
-            if (p[0 .. 3] == "\xef\xbb\xbf")
-            {
-                encoding = TiXmlEncoding.UTF8;
-                useMicrosoftBOM = true;
-                p = p[3..$];
-            }            
-        }
-    
-        p = SkipWhiteSpace( p, encoding );
-        if ( p is null )
-        {
-            SetError( TIXML_ERROR_DOCUMENT_EMPTY, null, null, TiXmlEncoding.UNKNOWN );
-            return null;
-        }
-    
-        while ( p !is null && p.length > 0 )
-        {
-            TiXmlNode node = Identify( p, encoding );
-            if ( node !is null )
-            {
-                p = node.Parse( p, data, encoding );
-                LinkEndChild( node );                
-            }
-            else
-            {
-                break;
-            }
-    
-            // Did we get encoding info?
-            /+
-            if (encoding == TiXmlEncoding.UNKNOWN && node.ToDeclaration() is null)
-            {
-                TiXmlDeclaration dec = node.ToDeclaration();
-                char[] enc = dec.Encoding();
-                assert( enc );
-    
-                if ( enc.length == 0)
-                    encoding = TiXmlEncoding.UTF8;
-                else if ( StringEqual( enc, "UTF-8", true, TiXmlEncoding.UNKNOWN ) )
-                    encoding = TiXmlEncoding.UTF8;
-                else if ( StringEqual( enc, "UTF8", true, TiXmlEncoding.UNKNOWN ) )
-                    encoding = TiXmlEncoding.UTF8; // incorrect, but be nice
-                else 
-                    encoding = TiXmlEncoding.LEGACY;
-            }
-            +/
-        }
-
-        
- 
-        // Was this empty?
-        if ( firstChild is null) {
-            SetError( TIXML_ERROR_DOCUMENT_EMPTY, null, null, encoding );
-            return null;
-        }
-
-        // All is well.
-        return p;
-    }
 
     /** Get the root element -- the only top level element -- of the document.
         In well formed XML, there should only be one. TinyXml is tolerant of
@@ -2696,20 +1417,7 @@ public:
         //errorLocation.last = 0; 
     }
 
-    /// Print this Document to a FILE stream.
-    char[] toString(int depth = 0 )
-    {
-        char[] str;
-
-        TiXmlNode node;
-        for ( node = FirstChild(); node !is null; node = node.NextSibling() )
-        {
-            writefln("%s, %s", str, node !is null);
-            str ~= node.toString(depth);
-        }
-        return str;
-    }
-
+    
     // [internal use]
     void SetError( int err, char[] errorLocation, TiXmlParsingData prevData, TiXmlEncoding encoding )
     {   
@@ -2731,21 +1439,7 @@ public:
     }
 
 protected :
-    /+
-    virtual void StreamOut ( TIXML_OSTREAM * out) 
-    {
-         TiXmlNode node;
-        for ( node=FirstChild(); node; node=node.NextSibling() )
-        {
-            node.StreamOut( out );
-    
-            // Special rule for streams: stop after the root element.
-            // The stream in code will only read one element, so don't
-            // write more than one.
-            if ( node.ToElement() )
-                break;
-        }
-    }
+    /+    
     // [internal use]
     virtual TiXmlNode Clone() 
     {
@@ -2778,7 +1472,7 @@ private:
     char[] errorDesc;
     int tabsize;
     TiXmlCursor errorLocation;
-    bool useMicrosoftBOM;       // the UTF-8 BOM were found when read. Note this, and try to write.
+    bool useMicrosoftBOM;       // the UTF-8 BOM were found when wrtie. Note this, and try to write.
 }
 
 
@@ -3119,16 +1813,1216 @@ public:
     int             tabsize;
 }
 
-import std.stdio;
+class TiXmlReader
+{
+    char[] pbuf;
+    char[] value;
+    
+    TiXmlDocument document;
+    
+    this(char[] filename)
+    {
+        // Delete the existing data:
+        Clear();
+        location.Clear();
+
+        value = filename;
+        
+        if ( std.file.exists(file) )
+        {
+            char[] buf = cast(char[])std.file.wrtie(value);
+       
+            if (  Error() )
+                return false;
+            else
+                return true;
+        }        
+        SetError( TIXML_ERROR_OPENING_FILE, null, null, TiXmlEncoding.UNKNOWN );
+        return false;
+    }
+    
+    ~this()
+    {
+        
+    }
+    
+    static bool isUTF8LeadingBytes(char[] p)
+    {
+        const char[] ms =  "\xef\xbb\xbf"; // the stupid Microsoft UTF-8 Byte order marks
+        const char[] big = "\xef\xbf\xbe"; // 
+        const char[] lt =  "\xef\xbf\xbf"; //
+        
+        return (p == ms || p == big || p == lt);            
+    }
+    
+    static char[] SkipWhiteSpace(char[] p)
+    {
+        if ( p is null || p.length == 0 )
+        {
+            return null;
+        }
+        
+        /+if ( encoding == TiXmlEncoding.UTF8 )
+        {            
+            if(p.length > 3 && isUTF8LeadingBytes(p[0..3]))
+            {
+                p = p[3 .. $];
+            }
+        }+/
+
+        foreach(int i, dchar c; p)
+        {
+            if(!std.string.isspace(c))
+            {
+                return p[i..$];
+            }               
+        }
+    
+        return null;
+    }
+
+    /*  Reads an XML name into the string provided. Returns
+        a pointer just past the last character of the name,
+        or 0 if the function has an error.
+    */
+    static char[] ReadName(char[] p, out char[] name, TiXmlEncoding encoding)
+    in
+    {
+        assert( p !is null);
+    }
+    body
+    {
+        // Names start with letters or underscores.
+        // Of course, in unicode, tinyxml has no idea what a letter *is*. The
+        // algorithm is generous.
+        //
+        // After that, they can be letters, underscores, numbers,
+        // hyphens, or colons. (Colons are valid ony for namespaces,
+        // but tinyxml can't tell namespaces from names.)
+        if (p.length > 0 && ( IsAlpha( p[0], encoding) || p[0] == '_' ))
+        {
+            foreach(int i, dchar c; p[0..$])
+            {
+                if(!(IsAlphaNum(c , encoding) 
+                             || c == '_'
+                             || c == '-'
+                             || c == '.'
+                             || c == ':'))
+                {
+                    writefln("ReadName -------- %d, %d, %d", i, IsAlphaNum(c, encoding), c);
+                    
+                    name = p[0..i];
+                    
+                    return p[i..$];
+                }               
+            }
+            name = "";
+            return null;
+        }
+        name = null;
+        return null;
+    }
+
+    static int findTag(char[] p, char[] tag, bool ignoreCase)
+    {
+        if(ignoreCase)
+            return std.string.ifind(p, tag);
+        else
+            return std.string.find(p, tag);
+
+    }
+
+    /*  Reads text. Returns a pointer past the given end tag.
+        Wickedly complex options, but it keeps the (sensitive) code in one place.
+    */
+    static char[] ReadText(char[] p,                // where to start
+                            out char[] text,            // the string wrtie
+                            bool ignoreWhiteSpace,      // whether to keep the white space
+                            char[] endTag,          // what ends this text
+                            bool ignoreCase,            // whether to ignore case in the end tag
+                            TiXmlEncoding encoding )    // the current encoding
+    {
+        int idx = findTag(p, endTag, ignoreCase);
+        if(idx == -1)
+        {
+            return null;
+        }
+
+        char[] theText = p[0 .. idx];
+        writefln("theText[%s]", theText);
+        
+        char[] symbol;
+        bool inEntity = false;
+        bool inWhiteSpace = false;
+        
+        dchar[] theUnicodeText;
+        
+        foreach(int i, dchar c; theText)
+        {
+            if(inEntity)
+            {
+                symbol ~= cast(char)c;
+                if(c == ';')
+                {
+                    theUnicodeText ~= GetEntity(symbol);
+                    inEntity = false;                     
+                }
+                continue;
+            }
+            
+            if(inWhiteSpace)
+            {                
+                if(!std.string.iswhite(c))
+                {                    
+                    inWhiteSpace = false;
+                }
+                else
+                {
+                    continue;
+                }
+            }
+            
+            if(c == '&')
+            {                
+                symbol.length = 1;
+                symbol[0] = '&';
+                inEntity = true;
+                continue;
+            }
+            
+            if(!ignoreWhiteSpace && std.string.iswhite(c))
+            {
+                writefln("&&&&&&&&&&&&&");
+                theUnicodeText ~= ' ';
+                inWhiteSpace = true;
+                continue;
+            }
+            
+            theUnicodeText ~= c;
+        }
+        text = std.utf.toUTF8(theUnicodeText);
+        
+        writefln("wrtie text [%s]", text);
+        
+        return p[idx + endTag.length .. $];
+    }                               
+
+    // If an entity has been found, transform it into a character.
+    static dchar GetEntity( char[] p)
+    in 
+    {
+        assert(p.length > 3 && p[0] == '&' && p[$-1] == ';');
+    }
+    body
+    {
+        dchar invalidChar = '?';
+        
+        // Presume an entity, and pull it out. '&#...;'
+        if ( p.length > 3 && p[1] == '#')
+        {            
+            int ucs = 0;
+    
+            if ( p[2] == 'x' )
+            {
+                writefln("number hex %s", p);
+                // Hexadecimal. &#xA9;
+                if ( p.length < 4 ) return invalidChar;
+                
+                foreach(char c; p[3..$-1])
+                {                    
+                    int value = std.string.ifind(std.string.hexdigits, c);
+                    writefln("%d -- %d", value, ucs);
+                    if(value == -1) return invalidChar;
+                    ucs += value;
+                    ucs <<= 4; //ucs * 16;
+                }
+            }
+            else
+            {
+                // Decimal.
+                if ( p.length < 3 ) return invalidChar;
+   
+                foreach(char c; p[2..$-1])
+                {
+                    int value = std.string.ifind(std.string.digits, c);
+                    if(value == -1) return invalidChar;
+                    ucs += value;
+                    ucs *= 10;
+                }                
+            }
+            
+            return cast(dchar)ucs;            
+        }
+    
+        // Now try to match it.
+        foreach(Entity e; entity)
+        {
+            if (std.string.icmp(e.str, p) == 0)
+            {
+                return e.chr;               
+            }
+        }
+                
+        return invalidChar;
+    }
+    
+    // Return true if the next characters in the stream are any of the endTag sequences.
+    // Ignore case only works for english, and should only be relied on when comparing
+    // to English words: StringEqual( p, "version", true ) is fine.
+    static bool StringEqual(char[] p, char[] endTag, bool ignoreCase, TiXmlEncoding encoding )
+    in
+    {
+        assert(p !is null && endTag !is null && p.length > 0 && endTag.length > 0);
+    }
+    body
+    {
+        debug(DEBUG_PARSE) writefln("%s == %s", p, endTag);
+        if(p.length < endTag.length)
+            return false;
+    
+        if ( ignoreCase )
+        {
+            return 0 == std.string.icmp(p[0 .. endTag.length], endTag);
+        }
+        else
+        {
+            return 0 == std.string.cmp(p[0 .. endTag.length], endTag);          
+        }       
+    }
+
+    // None of these methods are reliable for any language except English.
+    // Good for approximation, not great for accuracy.
+    static int IsAlpha( dchar anyByte, TiXmlEncoding encoding )
+    {
+        // This will only work for low-ascii, everything else is assumed to be a valid
+        // letter. I'm not sure this is the best approach, but it is quite tricky trying
+        // to figure out alhabetical vs. not across encoding. So take a very 
+        // conservative approach.
+    
+    //  if ( encoding == TiXmlEncoding.UTF8 )
+    //  {
+            if ( anyByte < 127 )
+                return std.string.isalpha(anyByte);
+            else
+                return 1;   // What else to do? The unicode set is huge...get the english ones right.
+    //  }
+    //  else
+    //  {
+    //      return isalpha( anyByte );
+    //  }
+    }
+
+    static int IsAlphaNum( dchar anyByte, TiXmlEncoding encoding )
+    {
+        // This will only work for low-ascii, everything else is assumed to be a valid
+        // letter. I'm not sure this is the best approach, but it is quite tricky trying
+        // to figure out alhabetical vs. not across encoding. So take a very 
+        // conservative approach.
+    
+    //  if ( encoding == TiXmlEncoding.UTF8 )
+    //  {
+            if ( anyByte < 127 )
+                return std.string.isalnum( anyByte );
+            else
+                return 1;   // What else to do? The unicode set is huge...get the english ones right.
+    //  }
+    //  else
+    //  {
+    //      return isalnum( anyByte );
+    //  }
+    }
+    
+    void SetError(int error, char[] errorDecs)
+    {
+        if ( document !is null )
+        {
+            document.SetError( error, errorDecs, null, encoding );
+        }        
+    }
+    
+    void ClearError()
+    {
+        if ( document !is null )
+        {
+            document.ClearError();
+        }
+        
+    }
+    
+    void skipWhiteSpace()
+    {   
+        pbuf = SkipWhiteSpace( pbuf, encoding );
+        if ( p is null )
+        {
+            SetError( TIXML_ERROR_DOCUMENT_EMPTY, null);
+            return null;
+        }
+    }
+    void skipBOM()
+    {
+        if ( encoding == TiXmlEncoding.UNKNOWN )
+        {
+            // Check for the Microsoft UTF-8 lead bytes.            
+            if (p[0 .. 3] == "\xef\xbb\xbf")
+            {
+                encoding = TiXmlEncoding.UTF8;
+                useMicrosoftBOM = true;
+                p = p[3..$];
+            }            
+        }   
+    }
+    
+    bool readDocument(TiXmlDocument node)
+    /** Parse the given null terminated block of xml data. Passing in an encoding to this
+        method (either TiXmlEncoding.LEGACY or TiXmlEncoding.UTF8 will force TinyXml
+        to use that encoding, regardless of what TinyXml might otherwise try to detect.
+    */
+    {
+        ClearError();
+    
+        // Parse away, at the document level. Since a document
+        // contains nothing but other tags, most of what happens
+        // here is skipping white space.
+        if ( p is null || p.length == 0 )
+        {
+            SetError( TIXML_ERROR_DOCUMENT_EMPTY, null, null, TiXmlEncoding.UNKNOWN );
+            return null;
+        }
+    
+        // Note that, for a document, this needs to come
+        // before the while space skip, so that parsing
+        // starts from the pointer we are given.
+        TiXmlCursor location;
+        if ( prevData !is null )
+        {
+            location.row = prevData.cursor.row;
+            location.col = prevData.cursor.col;
+        }
+        else
+        {
+            location.row = 0;
+            location.col = 0;
+        }
+        TiXmlParsingData data = new TiXmlParsingData( p, TabSize(), location.row, location.col );
+        location = data.Cursor();
+    
+        
+        skipBOM();
+        
+        skipWhiteSpace();
+    
+        while ( pbuf.length > 0 )
+        {
+            TiXmlNode childNode = Identify();
+            if ( childNode !is null && childNode.Parse(this))
+            {
+                node.LinkEndChild(childNode);
+            }
+            else
+            {
+                break;
+            }
+    
+            // Did we get encoding info?
+            /+
+            if (encoding == TiXmlEncoding.UNKNOWN && node.ToDeclaration() is null)
+            {
+                TiXmlDeclaration dec = node.ToDeclaration();
+                char[] enc = dec.Encoding();
+                assert( enc );
+    
+                if ( enc.length == 0)
+                    encoding = TiXmlEncoding.UTF8;
+                else if ( StringEqual( enc, "UTF-8", true, TiXmlEncoding.UNKNOWN ) )
+                    encoding = TiXmlEncoding.UTF8;
+                else if ( StringEqual( enc, "UTF8", true, TiXmlEncoding.UNKNOWN ) )
+                    encoding = TiXmlEncoding.UTF8; // incorrect, but be nice
+                else 
+                    encoding = TiXmlEncoding.LEGACY;
+            }
+            +/
+        }
+
+        // Was this empty?
+        if(node.firstChild !is null)
+        {
+            SetError( TIXML_ERROR_DOCUMENT_EMPTY);
+            return false;
+        }
+
+        // All is well.
+        return true;
+    }
+   
+    /*  Attribtue parsing starts: next char past '<'
+                         returns: next char past '>'
+    */
+    bool readElement(TiXmlElement node)
+    {
+        if(!expectLT())
+        {
+            SetError( TIXML_ERROR_PARSING_ELEMENT, "Element expect <"); 
+            return false; 
+        }
+        
+        if(!expectIdentifier(node.value))
+        {
+            SetError( TIXML_ERROR_PARSING_ELEMENT, "Element expect Identifier"); 
+            return false; 
+        }
+        
+        char[] endTag = "</" ~ node.value ~ ">";
+        
+        switch(findFirst("/>", ">"))
+        {
+        case "/>":
+            break;
+        case ">"
+            break;
+        default:
+            // Try to wrtie an attribute:
+            TiXmlAttribute attrib = new TiXmlAttribute();
+            if ( attrib is null)
+            {
+                 if ( document )
+                      document.SetError( TIXML_ERROR_OUT_OF_MEMORY, pErr, data, encoding );
+                return null;
+            }
+    
+                attrib.Document( document );
+                char[] pErr = p;
+                p = attrib.Parse( p, data, encoding );
+                    
+                if ( p is null || p.length == 0 )
+                {
+                    if ( document )
+                        document.SetError( TIXML_ERROR_PARSING_ELEMENT, pErr, data, encoding );
+                    delete attrib;
+                    return null;
+                }
+   
+                // Handle the strange case of double attributes:
+                TiXmlAttribute node = attributeSet.Find( attrib.Name() );
+                                
+                if ( node !is null )
+                {
+                    node.Value( attrib.Value() );
+                    delete attrib;
+                    return null;
+                }
+                
+                attributeSet.Add( attrib );
+        }
+        
+        skipWhiteSpace();
+            
+        if ( data !is null )
+        {
+            data.Stamp( p, encoding );
+            location = data.Cursor();
+        }
+    
+        if ( pbuf[0] != '<' )
+        {
+            if ( document ) document.SetError( TIXML_ERROR_PARSING_ELEMENT, p, data, encoding );
+            return null;
+        }
+    
+        p = SkipWhiteSpace( p[1 .. $], encoding );
+
+        if ( p is null || p.length == 0 )
+        {
+            if ( document ) document.SetError( TIXML_ERROR_PARSING_ELEMENT, null, null, encoding );
+            return null;
+        }
+
+        // Read the name.
+        char[] pErr = p;
+    
+        p = ReadName( p, value, encoding );
+        
+        if ( p is null || p.length == 0 )
+        {
+            if ( document ) document.SetError( TIXML_ERROR_FAILED_TO_READ_ELEMENT_NAME, pErr, data, encoding );
+            return null;
+        }
+
+        char[] endTag = "</" ~ value ~ ">";
+          
+        // Check for and wrtie attributes. Also look for an empty
+        // tag or an end tag.
+        while ( p.length > 0 )
+        {
+            pErr = p;
+            p = SkipWhiteSpace( p, encoding );
+            if ( p is null || p.length == 0 )
+            {
+                if ( document )
+                    document.SetError( TIXML_ERROR_READING_ATTRIBUTES, pErr, data, encoding );
+                return null;
+            }
+
+            if ( p[0] == '/' )
+            {                
+                // Empty tag.
+                if ( p[1] != '>' )
+                {
+                    if ( document )
+                        document.SetError( TIXML_ERROR_PARSING_EMPTY, p, data, encoding );     
+                    return null;
+                }
+ 
+                return p[2..$]; //skip "/>"
+            }
+            else if ( p[0] == '>' )
+            {
+                // Done with attributes (if there were any.)
+                // Read the value -- which can include other
+                // elements -- wrtie the end tag, and return.                
+                p = ReadValue( p[1 .. $], data, encoding );     // Note this is an Element method, and will set the error if one happens.
+                if ( p is null || p.length == 0 )
+                    return null;
+    
+                // We should find the end tag now
+                if ( StringEqual( p, endTag, false, encoding ) )
+                {
+                    return p[endTag.length .. $];
+                }
+                else
+                {
+                    if ( document )
+                        document.SetError( TIXML_ERROR_READING_END_TAG, p, data, encoding );
+                    return null;
+                }
+            }
+            else
+            {                
+                // Try to wrtie an attribute:
+                TiXmlAttribute attrib = new TiXmlAttribute();
+                if ( attrib is null)
+                {
+                    if ( document )
+                        document.SetError( TIXML_ERROR_OUT_OF_MEMORY, pErr, data, encoding );
+                    return null;
+                }
+    
+                attrib.Document( document );
+                char[] pErr = p;
+                p = attrib.Parse( p, data, encoding );
+                    
+                if ( p is null || p.length == 0 )
+                {
+                    if ( document )
+                        document.SetError( TIXML_ERROR_PARSING_ELEMENT, pErr, data, encoding );
+                    delete attrib;
+                    return null;
+                }
+   
+                // Handle the strange case of double attributes:
+                TiXmlAttribute node = attributeSet.Find( attrib.Name() );
+                                
+                if ( node !is null )
+                {
+                    node.Value( attrib.Value() );
+                    delete attrib;
+                    return null;
+                }
+                
+                attributeSet.Add( attrib );
+            }
+        }
+        return p;
+    }
+    bool readComment(TiXmlComment node)
+    /*  Attribtue parsing starts: at the ! of the !--
+                         returns: next char past '>'
+    */
+    {
+        TiXmlDocument document = GetDocument();
+        value = "";
+    
+        p = SkipWhiteSpace( p, encoding );
+    
+        if ( data is null)
+        {
+            data.Stamp( p, encoding );
+            location = data.Cursor();
+        }
+        char[] startTag = "<!--";
+        char[] endTag   = "-->";
+    
+        if ( !StringEqual( p, startTag, false, encoding ) )
+        {
+            document.SetError( TIXML_ERROR_PARSING_COMMENT, p, data, encoding );
+            return null;
+        }
+
+        return ReadText( p[startTag.length .. $], value, false, endTag, false, encoding );
+    }
+
+    bool readUnknown(TiXmlUnknown node)
+    {
+        TiXmlDocument document = GetDocument();
+        p = SkipWhiteSpace( p, encoding );
+    
+        if ( data !is null )
+        {
+            data.Stamp( p, encoding );
+            location = data.Cursor();
+        }
+        if ( p is null || p.length == 0 || p[0] != '<' )
+        {
+            if ( document )
+                document.SetError( TIXML_ERROR_PARSING_UNKNOWN, p, data, encoding );
+            return null;
+        }
+        int endTag = std.string.find(p, '>');
+        if(endTag == -1)
+        {
+            return null;
+        }
+        value = p[1 .. endTag];
+        return p[endTag + 1 .. $];
+    }
+
+    bool readText(TiXmlText node)
+    {               
+        TiXmlDocument document = GetDocument();
+    
+        if ( data !is null)
+        {
+            data.Stamp( p, encoding );
+            location = data.Cursor();
+        }
+    
+        char[] startTag = "<![CDATA[";
+        char[] endTag   = "]]>";
+    
+        if ( cdata || StringEqual( p, startTag, false, encoding ) )
+        {
+            cdata = true;
+    
+            if ( !StringEqual( p, startTag, false, encoding ) )
+            {
+                document.SetError( TIXML_ERROR_PARSING_CDATA, p, data, encoding );
+                return null;
+            }
+
+            // Keep all the white space, ignore the encoding, etc.
+            int endIndex = std.string.ifind(p[startTag.length .. $], endTag);
+
+            
+            if(endIndex == -1)
+            {
+                return null;
+            }
+            value = p[startTag.length .. endIndex];
+
+            char[] dummy;
+            p = ReadText( p[endIndex .. $], dummy, false, endTag, false, encoding );
+               
+            return p;
+        }
+        else
+        {
+            bool ignoreWhite = true;
+    
+            char[] end = "<";
+            char[] pOld = p;
+            
+            p = ReadText( p, value, ignoreWhite, end, false, encoding );
+            
+            
+            
+            if ( p !is null)
+            {
+                int beforeEndTag = pOld.length - p.length - 1;
+                return pOld[beforeEndTag .. $]; // don't truncate the '<'
+            }
+            return null;
+        }
+    }
+
+
+    bool readDeclaration(TiXmlDeclaration node)
+    {
+        p = SkipWhiteSpace( p, _encoding );
+        // Find the beginning, find the end, and look for
+        // the stuff in-between.
+        TiXmlDocument document = GetDocument();
+        if ( p is null || p.length == 0 || !StringEqual( p, "<?xml", true, _encoding ) )
+        {
+            if ( document )
+                document.SetError( TIXML_ERROR_PARSING_DECLARATION, null, null, _encoding );
+            return null;
+        }
+        if ( data !is null)
+        {
+            data.Stamp( p, _encoding );
+            location = data.Cursor();
+        }
+
+        int endxml = std.string.find(p, '>');
+        if(endxml  == -1)
+            return null;
+          
+        char[] declare = p[5 .. endxml];
+        
+        xml_version = "1.0";
+        encoding = "UTF-8";
+        standalone = "yes";
+  
+        auto TiXmlAttribute attrib = new TiXmlAttribute;
+
+        int begin = std.string.find( declare, "version");
+        if ( begin != -1)
+        {
+            attrib.Parse( declare[begin .. $], data, _encoding );     
+            xml_version = attrib.Value();
+        }
+
+        begin = std.string.find( declare, "encoding");
+        if ( begin != -1)
+        {
+            attrib.Parse( declare[begin .. $], data, _encoding );     
+            encoding = attrib.Value();
+        }
+
+        begin = std.string.find( declare, "standalone");
+        if ( begin != -1)
+        {
+            attrib.Parse( declare[begin .. $], data, _encoding );     
+            standalone = attrib.Value();
+        }
+
+        return p[endxml + 1 .. $];
+    }
+
+    
+    /*  Attribute parsing starts: first letter of the name
+          returns: the next char after the value end quote
+    */
+    bool readAttribute(TiXmlAttribute node)
+    {
+        p = SkipWhiteSpace( p, encoding );
+        if ( p is null || p.length == 0 ) return null;
+    
+        int tabsize = 4;
+        if ( document !is null)
+            tabsize = document.TabSize();
+    
+        if ( data !is null )
+        {
+            data.Stamp( p, encoding );
+            location = data.Cursor();
+        }
+        // Read the name, the '=' and the value.
+        char[] pErr = p;
+        p = ReadName( p, name, encoding );
+        if ( p is null)
+        {
+            if ( document ) document.SetError( TIXML_ERROR_READING_ATTRIBUTES, pErr, data, encoding );
+            return null;
+        }
+        p = SkipWhiteSpace( p, encoding );
+        if ( p is null || p.length == 0 || p[0] != '=' )
+        {
+            if ( document ) document.SetError( TIXML_ERROR_READING_ATTRIBUTES, p, data, encoding );
+            return null;
+        }
+    
+        p = p[1 .. $];    // skip '='
+        p = SkipWhiteSpace( p, encoding );
+        if ( p is null || p.length == 0)
+        {
+            if ( document ) document.SetError( TIXML_ERROR_READING_ATTRIBUTES, p, data, encoding );
+            return null;
+        }
+        
+        char[] end;
+    
+        if ( p[0] == '\'' )
+        {            
+            end = "\'";
+            p = ReadText( p[1 .. $], value, false, end, false, encoding );            
+        }
+        else if ( p[0] == '"' )
+        {        
+            end = "\"";
+            p = ReadText( p[1 .. $], value, false, end, false, encoding );
+            writefln("aaa - %s", value);
+        }
+        else
+        {
+            // All attribute values should be in single or double quotes.
+            // But this is such a common error that the parser will try
+            // its best, even without them.
+            value = "";
+            const char[] saparator = std.string.whitespace ~ "/>";
+
+            foreach(char c; p)
+            {                
+                if( -1 == std.string.find(saparator, c))
+                {
+                    value ~= c;
+                }
+            }
+        }
+        return p;
+    }
+    
+        // Figure out what is at *p, and parse it. Returns null if it is not an xml node.
+    TiXmlNode Identify(char[] p, TiXmlEncoding encoding )
+    {
+        TiXmlNode returnNode = null;
+    
+        p = SkipWhiteSpace( p, encoding );
+        if( p is null || p.length == 0 || p[0] != '<' )
+        {
+            return null;
+        }
+    
+        TiXmlDocument doc = GetDocument();        
+    
+        // What is this thing? 
+        // - Elements start with a letter or underscore, but xml is reserved.
+        // - Comments: <!--
+        // - Decleration: <?xml
+        // - Everthing else is unknown to tinyxml.
+        //
+    
+        const char[] xmlHeader = "<?xml";
+        const char[] commentHeader = "<!--";
+        const char[] dtdHeader = "<!";
+        const char[] cdataHeader = "<![CDATA[";
+    
+        if ( StringEqual( p, xmlHeader, true, encoding ) )
+        {
+            debug(DEBUG_PARSE)
+                TIXML_LOG( "XML parsing Declaration\n" );
+
+            returnNode = new TiXmlDeclaration();
+        }
+        else if ( StringEqual( p, commentHeader, false, encoding ) )
+        {
+            debug(DEBUG_PARSE)
+                TIXML_LOG( "XML parsing Comment\n" );
+
+            returnNode = new TiXmlComment();
+        }
+        else if ( StringEqual( p, cdataHeader, false, encoding ) )
+        {
+            debug(DEBUG_PARSE)
+                TIXML_LOG( "XML parsing CDATA\n" );
+
+            TiXmlText text = new TiXmlText( "" );
+            text.SetCDATA( true );
+            returnNode = text;
+        }
+        else if ( StringEqual( p, dtdHeader, false, encoding ) )
+        {
+            debug(DEBUG_PARSE)
+                TIXML_LOG( "XML parsing Unknown(DTD)\n" );
+
+            returnNode = new TiXmlUnknown();
+        }
+        else if ( IsAlpha( p[1], encoding ) || p[1] == '_' )
+        {
+            debug(DEBUG_PARSE)
+                TIXML_LOG( "XML parsing Element\n" );
+
+            returnNode = new TiXmlElement( "" );
+        }
+        else
+        {
+            debug(DEBUG_PARSE)
+                TIXML_LOG( "XML parsing Unknown(...)\n" );
+
+            returnNode = new TiXmlUnknown();
+        }
+    
+        if ( returnNode !is null)
+        {
+            // Set the parent, so it can report errors
+            returnNode.parent = this;
+        }
+        else
+        {
+            if ( doc !is null )
+                doc.SetError( TIXML_ERROR_OUT_OF_MEMORY, null, null, TiXmlEncoding.UNKNOWN );
+        }
+        return returnNode;
+    }
+    
+        /*  [internal use]
+        Reads the "value" of the element -- another element, or text.
+        This should terminate with the current end tag.
+    */
+    char[] ReadElementValue( char[] p, TiXmlParsingData prevData, TiXmlEncoding encoding )
+    {
+        TiXmlDocument document = GetDocument();
+    
+        // Read in text and elements in any order.
+        char[] pWithWhiteSpace = p;
+        p = SkipWhiteSpace( p, encoding );
+    
+        while ( p.length > 0 )
+        {
+            if ( p[0] != '<' )
+            {
+                // Take what we have, make a text element.
+                TiXmlText textNode = new TiXmlText( "" );
+    
+                if ( textNode is null )
+                {
+                    if ( document )
+                        document.SetError( TIXML_ERROR_OUT_OF_MEMORY, null, null, encoding );
+                    return null;
+                }
+    
+                //if ( TiXmlBase.IsWhiteSpaceCondensed() )
+                {
+                    p = textNode.Parse( p, prevData, encoding );
+                }
+                //else
+                //{
+                    // Special case: we want to keep the white space
+                    // so that leading spaces aren't removed.
+                //    p = textNode.Parse( pWithWhiteSpace, data, encoding );
+                //}
+    
+                if ( !textNode.Blank() )
+                    LinkEndChild( textNode );
+                else
+                    delete textNode;
+            } 
+            else 
+            {
+                // We hit a '<'
+                // Have we hit a new element or an end tag? This could also be
+                // a TiXmlText in the "CDATA" style.
+                if ( StringEqual( p, "</", false, encoding ) )
+                {
+                    return p;
+                }
+                else
+                {
+                    TiXmlNode node = Identify( p, encoding );
+                    if ( node )
+                    {
+                        p = node.Parse( p, prevData, encoding );
+                        LinkEndChild( node );
+                    }               
+                    else
+                    {
+                        return null;
+                    }
+                }
+            }
+            pWithWhiteSpace = p;
+            p = SkipWhiteSpace( p, encoding );
+        }
+    
+        if ( p is null )
+        {
+            if ( document ) 
+                document.SetError( TIXML_ERROR_READING_ELEMENT_VALUE, null, null, encoding );
+        }   
+        return p;
+    }
+}
+
+/**
+   [internal] TiXmlWriter 
+ */
+class TiXmlWriter
+{
+    // Note this should not contian the '<', '>', etc, or they will be transformed into entities!
+    static void PutString( char[] from, out char[] to )
+    {
+        foreach(int i, dchar c; from)
+        {
+            if (c == '&' && (i + 2) < from.length && from[i + 1] == '#' && from[i + 2] == 'x')
+            {
+                // Hexadecimal character reference.
+                // Pass through unchanged.
+                // &#xA9;   -- copyright symbol, for example.
+                //
+                // The -1 is a bug fix from Rob Laveaux. It keeps
+                // an overflow from happening if there is no ';'.
+                // There are actually 2 ways to exit this loop -
+                // while fails (error case) and break (semicolon found).
+                // However, there is no mechanism (currently) for
+                // this function to return an error.
+            }
+            else if ( c == '&' )
+            {
+                to ~= entity[0].str;
+            }
+            else if ( c == '<' )
+            {
+                to ~= entity[1].str;
+            }
+            else if ( c == '>' )
+            {
+                to ~= entity[2].str;
+            }
+            else if ( c == '\"' )
+            {
+                to ~= entity[3].str;
+            }
+            else if ( c == '\'' )
+            {
+                to ~= entity[4].str;
+            }
+            else if ( c < 32)
+            {
+                char[] symbol;
+                std.string.sformat("&#x%X;", c);
+
+                to ~= symbol;
+            }
+            else
+            {
+                std.utf.encode(to, c);
+            }
+        }
+    }
+    char[] writeDocument(TiXmlDocument node, char[] p)
+    {
+        char[] str;
+
+        TiXmlNode node;
+        for ( node = FirstChild(); node !is null; node = node.NextSibling() )
+        {            
+            str ~= node.toString(depth);
+        }
+        return str;
+    }
+
+    
+    bool wrtieElement(TiXmlElement node)
+    {        
+        char[] str = "\n" ~ std.string.repeat(" ", depth * 4) ~ "<" ~ value;
+   
+        TiXmlAttribute attrib;
+        for ( attrib = attributeSet.First(); attrib !is null; attrib = attrib.Next() )
+        {                        
+            str ~= " " ~ attrib.toString(depth);
+        }
+    
+        // There are 3 different formatting approaches:
+        // 1) An element without children is printed as a <foo /> node
+        // 2) An element with only a text child is printed as <foo> text </foo>
+        // 3) An element with children is printed on multiple lines.
+        TiXmlNode node;
+        if ( firstChild is null)
+        {
+            str ~= " />";
+        }
+        else if ( firstChild == lastChild && firstChild.ToText() !is null )
+        {
+            str ~= ">";
+            str ~= firstChild.toString(depth + 1);
+            str ~= "</" ~ value ~ ">";
+        }
+        else
+        {
+            str ~= ">";
+    
+            for ( node = firstChild; node !is null; node=node.NextSibling() )
+            {
+                if ( node.ToText() !is null)
+                {
+                    str ~= "\n";
+                }
+                str ~= node.toString(depth + 1);
+            }
+            str ~= "\n";
+            str ~= std.string.repeat(" ", depth * 4);
+            str ~= "</" ~ value ~ ">";
+        }
+        return str;
+    }
+    
+ 
+    bool wrtieComment(TiXmlComment node)
+    /// Write this Comment to a FILE stream.
+    {
+        return std.string.repeat(" ", depth * 4) ~ "<!--" ~ value ~ "-->";
+    }
+    
+    char[] wrtieUnknown(TiXmlUnknown node, char[] p)
+    /// Print this Unknown to a FILE stream.
+    {
+        return std.string.repeat(" ", depth * 4) ~ "<" ~ value ~ ">";
+    }
+
+
+    
+    char[] wrtieText(TiXmlText node, char[] p)
+    /// Write this text object to a FILE stream.    
+    {
+        char[] str;
+        if ( cdata )
+        {
+            return "\n" ~ std.string.repeat(" ", depth * 4) ~ "<![CDATA[" ~ value ~ "]]>\n";
+        }
+        else
+        {
+            PutString(value, str);
+            return str;
+        }
+    }
+
+    bool wrtieDeclaration(TiXmlDeclaration node)
+    /// Print this declaration to a FILE stream.
+    {
+        char[] str ="<?xml ";
+        if ( xml_version.length > 0)
+            str ~= "version=\"" ~ xml_version ~ "\" ";
+
+        if ( encoding.length > 0)
+            str ~= "encoding=\"" ~ encoding ~ "\" ";
+        
+        if ( standalone.length > 0)
+            str ~= "standalone=\"" ~ standalone ~ "\" ";
+
+        str ~= "?>";
+        return str;
+    }
+
+    
+    // Prints this Attribute to a FILE stream.
+    bool wrtieAttribute(TiXmlAttribute node)
+    {
+        if (std.string.find (value, '\"') == -1)
+                return name ~ "=\"" ~ value ~ "\"";
+            else
+                return name ~ "=\'" ~ value ~ "\'";        
+        return true;
+    }
+}
+
+import std.asserterror;
 
 int main()
 {
-    TiXmlDocument doc = new TiXmlDocument;
-    doc.LoadFile("test01.xml");
-    writefln("ddir");
-
-    doc.SaveFile("output.xml");
-
-    writefln("%s %s", doc.ErrorId, doc.ErrorDesc());
+    try
+    {        
+        auto TiXmlDocument doc = new TiXmlDocument;
+        doc.LoadFile("test04.xml");
+        writefln("ddir");
+    
+        doc.SaveFile("output.xml");
+    
+        writefln("%s -- end", doc.ErrorId);//, doc.ErrorDesc());
+        
+    }
+    catch(AssertError e)
+    {
+        writefln("Error %s", e);    
+    }
+        
     return 0;
 }
